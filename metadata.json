@@ -1,0 +1,7 @@
+{
+  "name": "Remix Remix: Copy of Remix: Ioncore CRM3 V4",
+  "description": "Intelligent CRM for Ioncore SAS powered by Gemini. Manage accounts, contacts, and opportunities with AI-driven insights and bulk data processing.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

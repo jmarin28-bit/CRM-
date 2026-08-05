@@ -1,0 +1,272 @@
+[
+  {
+    "timestamp": "2026-07-31T21:03:58.249Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:14:20.938Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:16:17.278Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:17:25.758Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:23:12.984Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:31:19.893Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T21:53:15.626Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-07-31T22:35:10.248Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-07-31T22:35:20.434Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T13:32:44.280Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-01T13:45:08.567Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T13:53:18.819Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T14:09:54.101Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T14:13:32.056Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T14:36:07.652Z",
+    "userId": "director_ioncore",
+    "action": "gmail_send_attempt",
+    "details": "Intento de envío de correo a jmarin28@gmail.com"
+  },
+  {
+    "timestamp": "2026-08-01T14:36:08.114Z",
+    "userId": "director_ioncore",
+    "action": "gmail_send_success",
+    "details": "Correo enviado a jmarin28@gmail.com (ID: 19fbdc0f7b110ac6)"
+  },
+  {
+    "timestamp": "2026-08-01T14:39:24.737Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T14:47:00.577Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T14:50:54.345Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T15:03:25.888Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T15:15:21.493Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-01T15:25:27.583Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T16:57:26.631Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T16:59:08.319Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:04:23.206Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:04:41.513Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:13:09.529Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:27:48.888Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:29:28.659Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:39:06.118Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:42:59.323Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T17:52:48.964Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T18:01:17.783Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T18:11:59.358Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T18:14:20.022Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-02T18:31:59.094Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-03T22:29:54.377Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-03T22:30:15.788Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-03T23:53:56.436Z",
+    "userId": "andres_asesor",
+    "action": "google_token_refreshed",
+    "details": "Access token renovado automáticamente."
+  },
+  {
+    "timestamp": "2026-08-04T22:39:28.571Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-05T15:42:44.916Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-05T15:42:49.128Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-05T15:43:00.421Z",
+    "userId": "director_ioncore",
+    "action": "google_token_refreshed",
+    "details": "Access token renovado automáticamente."
+  },
+  {
+    "timestamp": "2026-08-05T15:43:11.047Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-05T16:13:09.638Z",
+    "userId": "director_ioncore",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  }
+]
