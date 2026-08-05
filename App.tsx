@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
-import Accounts from './pages/Accounts';
-import Contacts from './pages/Contacts';
-import Assistant from './pages/Assistant';
-import Pipeline from './pages/Pipeline';
-import Projects from './pages/Projects';
-import Quotes from './pages/Quotes'; 
-import Login from './pages/Login'; 
-import Axis from './pages/Axis';
-import CommercialGuide from './pages/CommercialGuide';
+import Dashboard from './views/Dashboard';
+import Accounts from './views/Accounts';
+import Contacts from './views/Contacts';
+import Assistant from './views/Assistant';
+import Pipeline from './views/Pipeline';
+import Projects from './views/Projects';
+import Quotes from './views/Quotes'; 
+import Login from './views/Login'; 
+import Axis from './views/Axis';
+import CommercialGuide from './views/CommercialGuide';
+
 import { 
   listAccountsByUser,
   listContactsByUser,
