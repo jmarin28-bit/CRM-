@@ -143,7 +143,15 @@ export function listUsers(): CRMUser[] {
 export function getActiveUser(): CRMUser | null {
   try {
     const raw = localStorage.getItem(ACTIVE_USER_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      const users = listUsers();
+      const defaultUser = users.find((u) => u.id === "director_ioncore") || users[0];
+      if (defaultUser) {
+        setActiveUser(defaultUser);
+        return defaultUser;
+      }
+      return null;
+    }
 
     const parsed = JSON.parse(raw) as CRMUser;
     if (!parsed || !parsed.id) return null;
@@ -153,6 +161,7 @@ export function getActiveUser(): CRMUser | null {
     return null;
   }
 }
+
 
 export function setActiveUser(user: CRMUser) {
   localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(user));
@@ -525,16 +534,159 @@ export function assignRoundRobin(): string | null {
   return assignedUser.id;
 }
 
+const defaultSeedAccounts: AccountV2[] = [
+  {
+    id: "acc_demo_1",
+    ownerId: "director_ioncore",
+    razonSocial: "Ioncore SAS",
+    nombreComercial: "Ioncore Tech",
+    nit: "901234567-8",
+    sector: "Otros",
+    clasificacion: "AAA",
+    ciudad: "Bogotá",
+    direccion: "Calle 100 # 15-20",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "acc_demo_2",
+    ownerId: "director_ioncore",
+    razonSocial: "Ecopetrol S.A.",
+    nombreComercial: "Ecopetrol",
+    nit: "899999068-1",
+    sector: "Petróleo",
+    clasificacion: "AAA",
+    ciudad: "Bogotá",
+    direccion: "Carrera 13 # 36-24",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "acc_demo_3",
+    ownerId: "juan_sierra",
+    razonSocial: "Grupo Bancolombia",
+    nombreComercial: "Bancolombia",
+    nit: "890903938-8",
+    sector: "Alimentos",
+    clasificacion: "AA",
+    ciudad: "Medellín",
+    direccion: "Carrera 48 # 26-85",
+    createdAt: new Date().toISOString(),
+  }
+];
+
+const defaultSeedContacts: ContactV2[] = [
+  {
+    id: "cnt_demo_1",
+    ownerId: "director_ioncore",
+    accountId: "acc_demo_1",
+    fullName: "Carlos Mendoza",
+    role: "Director de Operaciones",
+    email: "carlos.mendoza@ioncore.co",
+    phone: "+57 300 123 4567",
+    whatsapp: "+57 300 123 4567",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "cnt_demo_2",
+    ownerId: "director_ioncore",
+    accountId: "acc_demo_1",
+    fullName: "Laura Gómez",
+    role: "Gerente de Compras",
+    email: "laura.gomez@ioncore.co",
+    phone: "+57 310 987 6543",
+    whatsapp: "+57 310 987 6543",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "cnt_demo_3",
+    ownerId: "director_ioncore",
+    accountId: "acc_demo_2",
+    fullName: "Roberto Silva",
+    role: "Jefe de Contratación",
+    email: "roberto.silva@ecopetrol.com.co",
+    phone: "+57 320 555 1234",
+    whatsapp: "+57 320 555 1234",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "cnt_demo_4",
+    ownerId: "juan_sierra",
+    accountId: "acc_demo_3",
+    fullName: "Ana Martínez",
+    role: "Directora Financiera",
+    email: "amartinez@bancolombia.com.co",
+    phone: "+57 315 444 8899",
+    whatsapp: "+57 315 444 8899",
+    createdAt: new Date().toISOString(),
+  }
+];
+
+const defaultSeedOpportunities: OpportunityV2[] = [
+  {
+    id: "opp_demo_1",
+    ownerId: "director_ioncore",
+    accountId: "acc_demo_1",
+    contactId: "cnt_demo_1",
+    titulo: "Implementación de Sistema de Análisis IA",
+    etapa: "Negociación",
+    valor: 45000000,
+    moneda: "COP",
+    probabilidad: 80,
+    fechaEstimadaCierre: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "opp_demo_2",
+    ownerId: "director_ioncore",
+    accountId: "acc_demo_2",
+    contactId: "cnt_demo_3",
+    titulo: "Suministro de Sensores de Laboratorio",
+    etapa: "Prospecto",
+    valor: 120000000,
+    moneda: "COP",
+    probabilidad: 30,
+    fechaEstimadaCierre: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "opp_demo_3",
+    ownerId: "juan_sierra",
+    accountId: "acc_demo_3",
+    contactId: "cnt_demo_4",
+    titulo: "Servicios de Automatización Comercial",
+    etapa: "Cotización",
+    valor: 35000000,
+    moneda: "COP",
+    probabilidad: 60,
+    fechaEstimadaCierre: new Date(Date.now() + 20 * 86400000).toISOString().split('T')[0],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+];
+
+
+export function ensureSeedData(): void {
+  const existingAccounts = readJSON<AccountV2[]>(ACCOUNTS_V2_KEY, []);
+  if (!existingAccounts || existingAccounts.length === 0) {
+    writeJSON(ACCOUNTS_V2_KEY, defaultSeedAccounts);
+    writeJSON(CONTACTS_V2_KEY, defaultSeedContacts);
+    writeJSON(OPPORTUNITIES_V2_KEY, defaultSeedOpportunities);
+  }
+}
+
 // =====================================================
 // 3) CUENTAS V2 (CON FILTRO ANTI-FANTASMA)
 // =====================================================
 export function listAccounts(): AccountV2[] {
+  ensureSeedData();
   rescueGhostAccounts();
   const accounts = readJSON<AccountV2[]>(ACCOUNTS_V2_KEY, []) || [];
   return accounts
     .filter(a => a && a.id && a.id.startsWith("acc_") && (a.razonSocial || a.nombreComercial))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
+
 
 export function listAccountsByUser(user?: CRMUser): AccountV2[] {
   const activeUser = user || getActiveUser();
