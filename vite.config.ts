@@ -96,6 +96,8 @@ function isAllowedOrigin(origin: string): boolean {
 
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
   if (hostname.endsWith('.localhost')) return true;
+  if (hostname.endsWith('.run.app')) return true;
+
 
   // Redes privadas (RFC 1918) y link-local
   if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
