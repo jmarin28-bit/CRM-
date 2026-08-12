@@ -76,3 +76,18 @@ Este archivo sirve como la **memoria persistente** y el conjunto de reglas del p
 - La tabla de ítems incluye columna `Unidad / Tipo` con selector: `Producto/Unidad`, `Servicio (Mano de obra)`, `Hora`, `Día`, `Lote`, `Otro`.
 - `detectQuoteTypeFromPrompt`: ignora nombres de empresa que contengan "servicio" para no confundir el tipo de cotización.
 
+### Director Comercial IA — Jerarquía de Intenciones y Ciclo de Vida de Actividades (`components/agent/CommercialGuidePanel.tsx` & `services/storage.ts`)
+**Fecha**: 2026-08-12 | **Aprobado por**: Usuario
+
+- **Ciclo de Vida de Actividades**:
+  - `vencida` es una **condición derivada** (`!isActivityDone(activity) && followUpAt < ahora`). NO es un estado estático permanente.
+  - Al marcar como realizada desde AXIS o el Director IA, se guarda `status: "completada"` y `completedAt: timestamp`.
+  - Una actividad completada o cancelada NUNCA vuelve a reportarse como vencida o pendiente.
+- **Jerarquía Estricta de Intenciones en `buildAgentAnswer`**:
+  1. `isTomorrowIntent` → Mañana (`tomorrowFollowUps`).
+  2. `isOverdueIntent` → Vencidos exclusivamente (`overdueFollowUps`).
+  3. `isTodayFollowUpIntent` → Seguimientos/llamadas de hoy exclusivamente (`todayFollowUps`).
+  4. `isTodayPendingIntent` → Consolidado limpio de pendientes de hoy (vencidos + hoy + cotizaciones + tareas) SIN menú 1-10.
+  5. `isBriefingIntent` → Plan operativo comercial completo con menú de acciones 1-10.
+
+

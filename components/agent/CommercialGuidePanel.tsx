@@ -579,7 +579,7 @@ export default function CommercialGuidePanel() {
       return "Escribe una pregunta para revisar tus pendientes comerciales.";
     }
 
-    // Identificar la intención de pendientes para MAÑANA
+    // 1. MAÑANA (isTomorrowIntent)
     const isTomorrowIntent =
       q.includes("manana") ||
       q.includes("mañana") ||
@@ -588,36 +588,58 @@ export default function CommercialGuidePanel() {
       q.includes("agenda de manana") ||
       q.includes("agenda de mañana");
 
-    // Identificar la intención de seguimientos diarios (Plan operativo)
-    const isFollowUpIntent =
+    // 2. VENCIDOS / ATRASADOS (isOverdueIntent)
+    const isOverdueIntent =
       !isTomorrowIntent && (
-        q.includes("seguimientos tengo") ||
-        q.includes("pendiente hoy") ||
-        q.includes("pendientes hoy") ||
-        q.includes("llamadas tengo hoy") ||
-        q.includes("hacer hoy en seguimientos") ||
-        q.includes("seguimientos del dia") ||
-        q.includes("seguimiento del dia") ||
+        q.includes("vencid") ||
+        q.includes("atrasad") ||
+        q.includes("que seguimientos tengo vencidos") ||
         q.includes("actividades tengo vencidas") ||
-        q.includes("llamadas debo hacer hoy") ||
-        q.includes("actividades para hoy")
+        q.includes("que tengo atrasado")
       );
 
-    // Identificar si la pregunta solicita el resumen comercial general
+    // 3. SEGUIMIENTOS Y LLAMADAS DE HOY (isTodayFollowUpIntent)
+    const isTodayFollowUpIntent =
+      !isTomorrowIntent &&
+      !isOverdueIntent && (
+        q.includes("seguimientos tengo hoy") ||
+        q.includes("seguimientos de hoy") ||
+        q.includes("llamadas tengo hoy") ||
+        q.includes("llamadas de hoy") ||
+        q.includes("llamadas debo hacer hoy") ||
+        q.includes("llamadas debo hacer") ||
+        q.includes("llamadas hoy") ||
+        q.includes("seguimientos debo hacer hoy") ||
+        q.includes("seguimiento del dia") ||
+        q.includes("seguimientos del dia")
+      );
+
+    // 4. PENDIENTES DE HOY (CONSOLIDADO LIMPIO DE HOY) (isTodayPendingIntent)
+    const isTodayPendingIntent =
+      !isTomorrowIntent &&
+      !isOverdueIntent &&
+      !isTodayFollowUpIntent && (
+        q.includes("que tengo pendiente hoy") ||
+        q.includes("que pendientes tengo hoy") ||
+        q.includes("pendientes tengo hoy") ||
+        q.includes("pendiente hoy") ||
+        q.includes("pendientes hoy") ||
+        q.includes("que debo hacer hoy")
+      );
+
+    // 5. BRIEFING / RESUMEN COMERCIAL COMPLETO CON PLAN OPERATIVO Y MENÚ DE ACCIONES (isBriefingIntent)
     const isBriefingIntent =
       !isTomorrowIntent &&
-      !isFollowUpIntent && (
+      !isOverdueIntent &&
+      !isTodayFollowUpIntent &&
+      !isTodayPendingIntent && (
         q.includes("resumen comercial") ||
         q.includes("informe comercial") ||
         q.includes("briefing") ||
         q.includes("debo revisar hoy") ||
         q.includes("debo revisar el dia") ||
         q.includes("hago primero hoy") ||
-        (q.includes("resumen") && (q.includes("hoy") || q.includes("del dia"))) ||
-        (q.includes("informe") && (q.includes("hoy") || q.includes("del dia"))) ||
-        (q.includes("briefing") && (q.includes("hoy") || q.includes("del dia"))) ||
-        (q.includes("pendiente") && (q.includes("hoy") || q.includes("del dia"))) ||
-        (q.includes("que tengo") && (q.includes("hoy") || q.includes("del dia")) && !q.includes("vencido") && !q.includes("para"))
+        q.includes("plan operativo")
       );
 
     if (isTomorrowIntent) {
@@ -649,7 +671,86 @@ export default function CommercialGuidePanel() {
       return parts.join("\n");
     }
 
-    if (isFollowUpIntent) {
+    if (isOverdueIntent) {
+      if (!briefing.overdueFollowUps || briefing.overdueFollowUps.length === 0) {
+        return "No tienes seguimientos ni actividades vencidas.";
+      }
+
+      return [
+        `Tienes ${briefing.overdueFollowUps.length} seguimiento(s) vencido(s):`,
+        ...briefing.overdueFollowUps.map(
+          (item, index) => `${index + 1}. ${item.title} — ${item.detail}`
+        ),
+      ].join("\n");
+    }
+
+    if (isTodayFollowUpIntent) {
+      if (!briefing.todayFollowUps || briefing.todayFollowUps.length === 0) {
+        return "No tienes seguimientos pendientes para hoy.";
+      }
+
+      return [
+        `Tienes ${briefing.todayFollowUps.length} seguimiento(s) para hoy:`,
+        ...briefing.todayFollowUps.map(
+          (item, index) => `${index + 1}. ${item.title} — ${item.detail}`
+        ),
+      ].join("\n");
+    }
+
+    if (isTodayPendingIntent) {
+      const parts: string[] = [];
+      const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+      const dateStr = new Date().toLocaleDateString('es-CO', options);
+      const capDate = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+      parts.push(`Pendientes para hoy - ${capDate}\n`);
+
+      const overdue = briefing.overdueFollowUps || [];
+      const today = briefing.todayFollowUps || [];
+      const quotes = briefing.pendingQuotes || [];
+      const tasks = [...(briefing.todayTasks || []), ...(briefing.memoryAlerts || [])];
+
+      let itemIndex = 1;
+
+      if (overdue.length > 0) {
+        parts.push("Vencidos:");
+        overdue.forEach((item) => {
+          parts.push(`${itemIndex++}. [Vencido] ${item.title} — ${item.detail}`);
+        });
+        parts.push("");
+      }
+
+      if (today.length > 0) {
+        parts.push("Seguimientos para hoy:");
+        today.forEach((item) => {
+          parts.push(`${itemIndex++}. [Hoy] ${item.title} — ${item.detail}`);
+        });
+        parts.push("");
+      }
+
+      if (quotes.length > 0) {
+        parts.push("Cotizaciones pendientes / sin OC:");
+        quotes.forEach((item) => {
+          parts.push(`${itemIndex++}. [Cotización] ${item.detail}`);
+        });
+        parts.push("");
+      }
+
+      if (tasks.length > 0) {
+        parts.push("Tareas y recordatorios:");
+        tasks.forEach((t) => {
+          parts.push(`${itemIndex++}. [Tarea] ${t.title || t.detail}`);
+        });
+        parts.push("");
+      }
+
+      if (itemIndex === 1) {
+        return "No tienes seguimientos, cotizaciones ni tareas pendientes para hoy.";
+      }
+
+      return parts.join("\n");
+    }
+
+    if (isBriefingIntent) {
       const parts: string[] = [];
       const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
       const dateStr = new Date().toLocaleDateString('es-CO', options);
