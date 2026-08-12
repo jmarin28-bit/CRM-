@@ -469,13 +469,34 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
             data: base64,
           });
 
-          if (data.razon_social) setRazonSocial(data.razon_social);
-          if (data.nombre_comercial) setNombreComercial(data.nombre_comercial);
+          if (data.razon_social) {
+            setRazonSocial(data.razon_social);
+            setNombreComercial(data.nombre_comercial || data.razon_social);
+          }
           if (data.nit) setNit(data.nit);
-          if (data.ciudad) setCiudad(data.ciudad);
-          if (data.direccion) setDireccion(data.direccion);
+          setCiudad(data.ciudad || "Bogotá D.C.");
+          setDireccion(data.direccion || "Dirección registrada en RUT");
+          setSede("Sede Principal");
 
+          // Auto-seleccionar Sector según Razón Social
+          const upperRs = (data.razon_social || "").toUpperCase();
+          if (upperRs.includes("PHARMA") || upperRs.includes("FARM") || upperRs.includes("BIOTEC") || upperRs.includes("MEDIC")) {
+            setSector("Farmacéutico / Biotecnología");
+          } else if (upperRs.includes("UNIV") || upperRs.includes("EDUCAC") || upperRs.includes("COLEGIO") || upperRs.includes("INVESTIGAC")) {
+            setSector("Educación / Investigación");
+          } else if (upperRs.includes("HOSPITAL") || upperRs.includes("SALUD") || upperRs.includes("CLINIC") || upperRs.includes("IPS")) {
+            setSector("Hospitalario / Salud");
+          } else if (upperRs.includes("ALIMENT") || upperRs.includes("BEBID") || upperRs.includes("AGRO")) {
+            setSector("Alimentos y Bebidas");
+          } else {
+            setSector("Laboratorio / Diagnóstico / Analítica");
+          }
 
+          // Auto-seleccionar Clasificación por defecto
+          setClasificacion("Potencial");
+
+          // Limpiar cualquier error de validación previo
+          setFormErrors({});
 
           if (!data.razon_social && !data.nit) {
             setRutError("No se pudo leer automáticamente este RUT. Asegúrate de subir el PDF original descargado de la DIAN o ingresa los datos manualmente.");
