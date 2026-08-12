@@ -579,21 +579,33 @@ export default function CommercialGuidePanel() {
       return "Escribe una pregunta para revisar tus pendientes comerciales.";
     }
 
+    // Identificar la intención de pendientes para MAÑANA
+    const isTomorrowIntent =
+      q.includes("manana") ||
+      q.includes("mañana") ||
+      q.includes("proximos dias") ||
+      q.includes("próximos días") ||
+      q.includes("agenda de manana") ||
+      q.includes("agenda de mañana");
+
     // Identificar la intención de seguimientos diarios (Plan operativo)
     const isFollowUpIntent =
-      q.includes("seguimientos tengo") ||
-      q.includes("pendiente hoy") ||
-      q.includes("pendientes hoy") ||
-      q.includes("llamadas tengo hoy") ||
-      q.includes("hacer hoy en seguimientos") ||
-      q.includes("seguimientos del dia") ||
-      q.includes("seguimiento del dia") ||
-      q.includes("actividades tengo vencidas") ||
-      q.includes("llamadas debo hacer hoy") ||
-      q.includes("actividades para hoy");
+      !isTomorrowIntent && (
+        q.includes("seguimientos tengo") ||
+        q.includes("pendiente hoy") ||
+        q.includes("pendientes hoy") ||
+        q.includes("llamadas tengo hoy") ||
+        q.includes("hacer hoy en seguimientos") ||
+        q.includes("seguimientos del dia") ||
+        q.includes("seguimiento del dia") ||
+        q.includes("actividades tengo vencidas") ||
+        q.includes("llamadas debo hacer hoy") ||
+        q.includes("actividades para hoy")
+      );
 
     // Identificar si la pregunta solicita el resumen comercial general
     const isBriefingIntent =
+      !isTomorrowIntent &&
       !isFollowUpIntent && (
         q.includes("resumen comercial") ||
         q.includes("informe comercial") ||
@@ -607,6 +619,35 @@ export default function CommercialGuidePanel() {
         (q.includes("pendiente") && (q.includes("hoy") || q.includes("del dia"))) ||
         (q.includes("que tengo") && (q.includes("hoy") || q.includes("del dia")) && !q.includes("vencido") && !q.includes("para"))
       );
+
+    if (isTomorrowIntent) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+      const dateStr = tomorrow.toLocaleDateString('es-CO', options);
+      const capDate = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+      const parts: string[] = [];
+      parts.push(`Pendientes para mañana - ${capDate}\n`);
+      parts.push("Como tu Director Comercial IA, revisé tu agenda y compromisos programados para el día de mañana.\n");
+
+      const tomorrowItems = briefing.tomorrowFollowUps || [];
+
+      if (tomorrowItems.length > 0) {
+        parts.push(`Tienes ${tomorrowItems.length} seguimiento(s) o compromiso(s) programado(s) para mañana:`);
+        tomorrowItems.forEach((item, index) => {
+          parts.push(`${index + 1}. ${item.title} — ${item.detail}`);
+        });
+      } else {
+        parts.push("No tienes seguimientos ni reuniones programadas para mañana.");
+      }
+
+      if (briefing.overdueFollowUps && briefing.overdueFollowUps.length > 0) {
+        parts.push(`\nNota: Tienes ${briefing.overdueFollowUps.length} seguimiento(s) vencido(s) que requieren tu atención hoy antes de pasar a la agenda de mañana.`);
+      }
+
+      return parts.join("\n");
+    }
 
     if (isFollowUpIntent) {
       const parts: string[] = [];
@@ -634,9 +675,15 @@ export default function CommercialGuidePanel() {
 
       parts.push("Prioridad crítica\n");
       
-      helperPrint("Actividades vencidas:", briefing.overdueFollowUps || [], "No tienes actividades vencidas.", (i) => !i.detail.toLowerCase().includes("llamada") && !i.detail.toLowerCase().includes("reunion") && !i.detail.toLowerCase().includes("visita"));
-      helperPrint("Llamadas atrasadas:", briefing.overdueFollowUps || [], "No tienes llamadas atrasadas registradas.", (i) => i.detail.toLowerCase().includes("llamada"));
-      helperPrint("Reuniones o visitas no concretadas:", briefing.overdueFollowUps || [], "No tienes reuniones o visitas pendientes de concretar.", (i) => i.detail.toLowerCase().includes("reunion") || i.detail.toLowerCase().includes("visita"));
+      if (briefing.overdueFollowUps && briefing.overdueFollowUps.length > 0) {
+        parts.push(`Seguimientos y actividades vencidas (${briefing.overdueFollowUps.length}):`);
+        briefing.overdueFollowUps.slice(0, 5).forEach((item, index) => {
+          parts.push(`${index + 1}. ${item.detail || item.title}`);
+        });
+        parts.push("");
+      } else {
+        parts.push("Actividades vencidas:\nNo tienes actividades vencidas.\n");
+      }
 
       parts.push("Prioridad alta\n");
       helperPrint("Cotizaciones enviadas sin OC:", briefing.pendingQuotes || [], "No tienes cotizaciones enviadas sin OC.", (i) => i.detail.toLowerCase().includes("enviada sin oc"));

@@ -121,6 +121,7 @@ const getGoogleCredentials = () => {
 // Check if credentials are set (if not, we run in Sandbox Mock Mode)
 export const isMockMode = (): boolean => {
   if (process.env.MOCK_OAUTH === 'true') return true;
+  if (process.env.MOCK_OAUTH === 'false') return false;
   const { client_id, client_secret } = getGoogleCredentials();
   return !client_id || !client_secret || client_id === 'YOUR_CLIENT_ID';
 };
@@ -129,9 +130,11 @@ export const isMockMode = (): boolean => {
 export function getUserTokens(userId: string) {
   try {
     const data = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8') || '{}');
+    if (!userId) return null;
+
     let encrypted = data[userId];
-    if (!encrypted) {
-      encrypted = data['director_ioncore'] || data['1'] || Object.values(data)[0];
+    if (!encrypted && (userId === 'director_ioncore' || userId === '1')) {
+      encrypted = data['director_ioncore'] || data['1'];
     }
     if (!encrypted) return null;
 
@@ -171,10 +174,13 @@ export function saveUserTokens(userId: string, tokens: any) {
     const data = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8') || '{}');
     const encrypted = encrypt(JSON.stringify(tokens));
     data[userId] = encrypted;
+    if (tokens.email) {
+      data[tokens.email] = encrypted;
+    }
     data['director_ioncore'] = encrypted;
     data['1'] = encrypted;
     fs.writeFileSync(TOKENS_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    console.log("[saveUserTokens] OK. Guardado para userId:", userId, "y aliases director_ioncore / 1");
+    console.log("[saveUserTokens] OK. Guardado para userId:", userId, "email:", tokens.email);
   } catch (e) {
     console.error("[saveUserTokens] Error saving user tokens:", e);
   }
@@ -187,7 +193,9 @@ export function deleteUserTokens(userId: string) {
     delete data[userId];
     delete data['director_ioncore'];
     delete data['1'];
-    fs.writeFileSync(TOKENS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    // Purga completa de base de datos de tokens al desconectar la cuenta activa
+    fs.writeFileSync(TOKENS_FILE, JSON.stringify({}, null, 2), 'utf-8');
+    console.log("[deleteUserTokens] OK. Tokens de Google purgados completamente.");
   } catch (e) {
     console.error("Error deleting user tokens:", e);
   }

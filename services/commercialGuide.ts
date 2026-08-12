@@ -134,9 +134,35 @@ function listOpportunitiesByUser(): OpportunityV2[] {
   return opportunities.filter((opportunity) => opportunity.ownerId === user.id);
 }
 
+function listQuotesByUser(): any[] {
+  const user = getActiveUserLite();
+  const quotes = readJSON<any[]>("crm_quotes_v2", []).filter(
+    (q) => q && q.id && q.accountId
+  );
+
+  if (!user) return [];
+  if (user.role === "director") return quotes;
+
+  const userAccountIds = new Set(listAccountsByUser().map((a) => a.id));
+  return quotes.filter(
+    (q) => q.ownerId === user.id || (q.accountId && userAccountIds.has(q.accountId))
+  );
+}
+
 function listOpenAgentMemory(): AgentMemoryItem[] {
-  return readJSON<AgentMemoryItem[]>(AGENT_MEMORY_KEY, [])
-    .filter((item) => item && item.id && item.status === "open")
+  const user = getActiveUserLite();
+  const memory = readJSON<AgentMemoryItem[]>(AGENT_MEMORY_KEY, []).filter(
+    (item) => item && item.id && item.status === "open"
+  );
+
+  if (!user) return [];
+  if (user.role === "director") {
+    return memory.sort((a, b) => ((a.createdAt || "") < (b.createdAt || "") ? 1 : -1));
+  }
+
+  const userAccountIds = new Set(listAccountsByUser().map((a) => a.id));
+  return memory
+    .filter((item) => !item.accountId || userAccountIds.has(item.accountId))
     .sort((a, b) => ((a.createdAt || "") < (b.createdAt || "") ? 1 : -1));
 }
 
@@ -216,6 +242,7 @@ export type CommercialGuideBriefing = {
   memoryAlerts: CommercialGuideItem[];
   overdueFollowUps: CommercialGuideItem[];
   todayFollowUps: CommercialGuideItem[];
+  tomorrowFollowUps: CommercialGuideItem[];
   upcomingFollowUps: CommercialGuideItem[];
   riskOpportunities: CommercialGuideItem[];
   coldAccounts: CommercialGuideItem[];
@@ -384,6 +411,39 @@ export function getTodayCommercialBriefing(): CommercialGuideBriefing {
       };
     });
 
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
+  const tomorrowEnd = new Date(todayEnd);
+  tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
+
+  const tomorrowFollowUps: CommercialGuideItem[] = followUps
+    .filter((activity) => {
+      const date = new Date(activity.followUpAt as string);
+      return date >= tomorrowStart && date <= tomorrowEnd;
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.followUpAt as string).getTime() -
+        new Date(b.followUpAt as string).getTime()
+    )
+    .map((activity) => {
+      const contact = resolveContact(activity.contactId);
+      const account = resolveAccount(activity.accountId, activity.contactId);
+
+      return {
+        id: activity.id,
+        activityId: activity.id,
+        accountId: account?.id || activity.accountId,
+        contactId: activity.contactId,
+        title: buildFollowUpTitle("Seguimiento para mañana", account, contact),
+        detail: buildFollowUpDetail(activity, account, contact),
+        type: "upcoming",
+        priority: "media",
+        date: activity.followUpAt || undefined,
+      };
+    });
+
   const upcomingFollowUps: CommercialGuideItem[] = followUps
     .filter((activity) => new Date(activity.followUpAt as string) > todayEnd)
     .sort(
@@ -496,23 +556,25 @@ export function getTodayCommercialBriefing(): CommercialGuideBriefing {
 
   const recommendations = getAIRecommendations();
 
-  const quotes = readJSON<any[]>("crm_quotes_v2", []).filter(q => q && q.id && q.accountId);
+  const quotes = listQuotesByUser();
   const tasks = readJSON<any[]>("ioncore_tasks", []).filter(t => t && t.id);
 
   const pendingQuotes = quotes
     .filter((q) => q.status === "enviada" || q.status === "borrador" || q.status === "revisada")
     .map((q) => {
       const account = resolveAccount(q.accountId, q.contactId);
-      const accountName = account ? getAccountName(account) : "Cliente desconocido";
+      if (!account) return null;
+      const accountName = getAccountName(account);
       let suffix = "pendiente interno";
       if (q.status === "enviada") {
         suffix = "enviada sin OC";
       }
       return {
         id: q.id,
-        detail: `Cotización ${q.quoteNumber} para ${accountName} - ${suffix}`,
+        detail: `Cotización ${q.quoteNumber || q.id} para ${accountName} - ${suffix}`,
       };
-    });
+    })
+    .filter((item): item is { id: string; detail: string } => item !== null);
 
   const todayTasks = tasks
     .filter((t) => t.status !== "Completada" && t.status !== "Realizada")
@@ -526,18 +588,20 @@ export function getTodayCommercialBriefing(): CommercialGuideBriefing {
     overdueFollowUps.length +
     todayFollowUps.length +
     riskOpportunities.length +
-    memoryAlerts.length;
+    memoryAlerts.length +
+    pendingQuotes.length;
 
   const summary =
     totalPending === 0
       ? "Tu día comercial está tranquilo. No tienes vencidos, riesgos críticos ni memorias pendientes visibles."
-      : `Tienes ${totalPending} pendientes importantes: ${overdueFollowUps.length} vencidos, ${todayFollowUps.length} para hoy, ${riskOpportunities.length} oportunidades en riesgo y ${memoryAlerts.length} memorias abiertas.`;
+      : `Tienes ${totalPending} pendientes importantes: ${overdueFollowUps.length} vencidos, ${todayFollowUps.length} para hoy, ${riskOpportunities.length} oportunidades en riesgo, ${pendingQuotes.length} cotizaciones pendientes y ${memoryAlerts.length} memorias abiertas.`;
 
   return {
     summary,
     memoryAlerts,
     overdueFollowUps,
     todayFollowUps,
+    tomorrowFollowUps,
     upcomingFollowUps,
     riskOpportunities,
     coldAccounts,

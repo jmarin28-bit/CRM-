@@ -268,5 +268,113 @@
     "userId": "director_ioncore",
     "action": "google_disconnect",
     "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T19:11:07.865Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T19:11:15.105Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T19:11:19.320Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T19:12:02.086Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T20:21:30.384Z",
+    "userId": "director_ioncore",
+    "action": "google_connect_success",
+    "details": "Cuenta sandbox (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-11T20:28:03.465Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_connect_success",
+    "details": "Cuenta sandbox (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-11T20:28:36.235Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_attempt",
+    "details": "Intento de envío de correo a jmarin28@gmail.com"
+  },
+  {
+    "timestamp": "2026-08-11T20:28:36.241Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_success",
+    "details": "Correo enviado (Mock) a jmarin28@gmail.com (ID: mock_msg_id_1786480116237)"
+  },
+  {
+    "timestamp": "2026-08-11T20:30:16.075Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T20:30:39.517Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_connect_success",
+    "details": "Cuenta sandbox (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-11T20:34:22.812Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_disconnect",
+    "details": "Conexión de Google (mgs.comercial@ioncore-sas.com) revocada."
+  },
+  {
+    "timestamp": "2026-08-11T21:16:36.969Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_connect_success",
+    "details": "Cuenta corporativa (mgs.comercial@ioncore-sas.com) conectada."
+  },
+  {
+    "timestamp": "2026-08-11T21:17:04.190Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_attempt",
+    "details": "Intento de envío de correo a jmarin28@gmail.com"
+  },
+  {
+    "timestamp": "2026-08-11T21:17:04.581Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_success",
+    "details": "Correo enviado a jmarin28@gmail.com (ID: 19ff2afa26879410)"
+  },
+  {
+    "timestamp": "2026-08-12T15:03:31.642Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_token_refreshed",
+    "details": "Access token renovado automáticamente."
+  },
+  {
+    "timestamp": "2026-08-12T20:27:25.266Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "google_token_refreshed",
+    "details": "Access token renovado automáticamente."
+  },
+  {
+    "timestamp": "2026-08-12T20:27:49.080Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_attempt",
+    "details": "Intento de envío de correo a it.admin@ioncore-sas.com"
+  },
+  {
+    "timestamp": "2026-08-12T20:27:49.608Z",
+    "userId": "usr_1786473358489_f071302e77edf",
+    "action": "gmail_send_success",
+    "details": "Correo enviado a it.admin@ioncore-sas.com (ID: 19ff7a8ed324163a)"
   }
 ]

@@ -449,50 +449,13 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
     }
   }
 
-  async function runBrowserOcr(file: File): Promise<{ razon_social?: string; nit?: string; direccion?: string; ciudad?: string }> {
-    try {
-      if (!(window as any).Tesseract) {
-        await new Promise<void>((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-          script.onload = () => resolve();
-          script.onerror = () => reject(new Error("No se pudo cargar motor de OCR Tesseract."));
-          document.head.appendChild(script);
-        });
-      }
-
-      const Tesseract = (window as any).Tesseract;
-      if (Tesseract && Tesseract.recognize) {
-        const workerResult = await Tesseract.recognize(file, 'spa+eng');
-        const text = workerResult?.data?.text || '';
-
-        const result: { razon_social?: string; nit?: string; direccion?: string; ciudad?: string } = {};
-
-        const nitMatch = text.match(/(?:NIT|Casilla\s*5|Identificaci[oó]n)[:\s]*([\d.\-]{8,15})/i) ||
-                         text.match(/\b(\d{9,10}-\d|\d{3}\.\d{3}\.\d{3}-\d|\d{9})\b/);
-        if (nitMatch) result.nit = nitMatch[1].replace(/[^\d\-]/g, '');
-
-        const razonMatch = text.match(/(?:Razon\s*Social|Razón\s*Social|Casilla\s*35)[:\s]*([^\r\n]{3,60})/i) ||
-                           text.match(/35\s+([A-Z0-9\s.\-&]{4,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?))/i) ||
-                           text.match(/([A-Z0-9\s.\-&]{4,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?))/i);
-        if (razonMatch) result.razon_social = razonMatch[1].trim();
-
-        const dirMatch = text.match(/(?:Direcci[oó]n|Casilla\s*41)[:\s]*([^\r\n]{5,60})/i) ||
-                         text.match(/(Calle|Carrera|Cra|Cl|Av|Avenida|Transversal|Tv|Diagonal|Dg)[^\r\n]{5,50}/i);
-        if (dirMatch) result.direccion = dirMatch[0].trim();
-
-        const ciudadMatch = text.match(/\b(Bogot[aá]|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|Cúcuta|Ibagué|Neiva|Santa Marta|Villavicencio|Rionegro|Envigado|Itagüí|Chía|Soacha)\b/i);
-        if (ciudadMatch) result.ciudad = ciudadMatch[0];
-
-        return result;
-      }
-    } catch (e) {
-      console.warn("Browser Tesseract OCR fallback error:", e);
-    }
-    return {};
-  }
-
   async function onAutofillRut(file: File) {
+    if (!file.type.includes("pdf") && !file.name.toLowerCase().endsWith(".pdf")) {
+      setRutError("Solo se permiten archivos PDF del RUT. Asegúrate de subir el PDF original descargado de la DIAN.");
+      setRutLoading(false);
+      return;
+    }
+
     setRutLoading(true);
     setRutError("");
     try {
@@ -501,19 +464,10 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
       reader.onload = async () => {
         try {
           const base64 = String(reader.result).split(",")[1];
-          const fileMime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/png");
-          let data = await extractRutData({
-            mimeType: fileMime,
+          const data = await extractRutData({
+            mimeType: "application/pdf",
             data: base64,
           });
-
-          // Si el backend no extrajo Razón Social ni NIT (ej: foto o PDF escaneado sin texto vectorial), ejecutar OCR de navegador
-          if (!data.razon_social && !data.nit) {
-            const ocrData = await runBrowserOcr(file);
-            if (ocrData.razon_social || ocrData.nit) {
-              data = { ...data, ...ocrData };
-            }
-          }
 
           if (data.razon_social) setRazonSocial(data.razon_social);
           if (data.nombre_comercial) setNombreComercial(data.nombre_comercial);
@@ -521,8 +475,10 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
           if (data.ciudad) setCiudad(data.ciudad);
           if (data.direccion) setDireccion(data.direccion);
 
+
+
           if (!data.razon_social && !data.nit) {
-            setRutError("No se pudo detectar información de Razón Social o NIT en el documento. Revisa los campos manualmente.");
+            setRutError("No se pudo leer automáticamente este RUT. Asegúrate de subir el PDF original descargado de la DIAN o ingresa los datos manualmente.");
           }
         } catch (err: any) {
           console.error("RUT extraction error:", err);
@@ -1052,14 +1008,14 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
                     className="bg-blue-600 text-white px-8 py-4 rounded-[20px] font-black text-sm flex items-center gap-2 shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95 disabled:bg-slate-300"
                   >
                     <Cloud size={18} />
-                    {rutLoading ? "Procesando RUT..." : "Extraer Datos de RUT (PDF o Imagen)"}
+                    {rutLoading ? "Procesando RUT..." : "Extraer Datos de RUT (PDF)"}
                   </button>
 
                   <input
                     ref={fileInputRef}
                     type="file"
                     hidden
-                    accept="application/pdf,image/png,image/jpeg,image/webp,image/*"
+                    accept="application/pdf,.pdf"
                     onChange={(e) => e.target.files?.[0] && onAutofillRut(e.target.files[0])}
                   />
                 </div>

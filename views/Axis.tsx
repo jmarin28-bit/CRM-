@@ -42,6 +42,17 @@ const getContactDisplayName = (contact: any) => {
   );
 };
 
+/** Extrae SOLO el nombre de la persona, descartando el sufijo de empresa.
+ *  Ejemplo: "Johan Arevalo · SERVICIO GEOLOGICO COLOMBIANO" → "Johan Arevalo"
+ *  Separa por '·', '•', ' - ', ' / ' y toma la primera parte. */
+const getContactPersonName = (contact: any): string => {
+  const full = getContactDisplayName(contact);
+  // Separadores comunes usados cuando el fullName trae empresa concatenada
+  const separatorMatch = full.match(/^([^·•]+?)\s*[·•]\s*.+$/) ||
+                         full.match(/^([^-]+?)\s+-\s+[A-Z].+$/);
+  return separatorMatch ? separatorMatch[1].trim() : full.trim();
+};
+
 const formatAxisDateTime = (value?: string | null) => {
   if (!value) return "Sin fecha";
 
@@ -106,13 +117,14 @@ const findContactMatchesInText = (text: string): ContactMatch[] => {
 
   return contacts
     .map((contact: any) => {
-      const name = normalizeText(getContactDisplayName(contact));
-      const nameWords = name.split(" ").filter((word) => word.length > 2);
+      // Usar SOLO el nombre de la persona (sin sufijo de empresa) para scoring
+      const personName = normalizeText(getContactPersonName(contact));
+      const nameWords = personName.split(" ").filter((word) => word.length > 2);
 
       let score = 0;
 
-      if (name && normalized.includes(name)) {
-        score = name.length + 300;
+      if (personName && normalized.includes(personName)) {
+        score = personName.length + 300;
       } else {
         const matchedWords = nameWords.filter((word) => normalized.includes(word));
         score = matchedWords.length * 40;
@@ -134,6 +146,39 @@ const findContactInText = (text: string) => {
   if (topMatches.length > 1) return null;
 
   return matches[0].contact;
+};
+
+const findAccountInText = (text: string, accounts: any[]) => {
+  if (!text || !text.trim()) return null;
+  const normalized = normalizeText(text);
+
+  let bestMatch: any = null;
+  let bestScore = 0;
+
+  accounts.forEach((acc: any) => {
+    const name = normalizeText(acc.nombreComercial || acc.razonSocial || "");
+    if (!name || name.length < 3) return;
+
+    if (normalized.includes(name)) {
+      const score = name.length + 200;
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = acc;
+      }
+    } else {
+      const words = name.split(" ").filter((w: string) => w.length > 2);
+      const matched = words.filter((w: string) => normalized.includes(w));
+      if (matched.length >= 2) {
+        const score = matched.length * 30;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = acc;
+        }
+      }
+    }
+  });
+
+  return bestScore >= 40 ? bestMatch : null;
 };
 
 const getNextWeekdayDate = (weekday: number) => {
@@ -376,10 +421,18 @@ export default function Axis() {
   const resolvedContact =
     selectedContact || (ambiguousContacts.length > 1 ? null : detectedContact);
 
+  const detectedAccount = useMemo(() => {
+    if (!transcript.trim()) return null;
+    return findAccountInText(transcript, axisAccounts);
+  }, [transcript, axisAccounts, refresh]);
+
   const resolvedAccount = useMemo(() => {
-    if (!resolvedContact?.accountId) return null;
-    return axisAccounts.find((a: any) => a.id === resolvedContact.accountId) || null;
-  }, [resolvedContact, axisAccounts]);
+    if (resolvedContact?.accountId) {
+      const acc = axisAccounts.find((a: any) => a.id === resolvedContact.accountId);
+      if (acc) return acc;
+    }
+    return detectedAccount;
+  }, [resolvedContact, detectedAccount, axisAccounts]);
 
   const pendingFollowUps = useMemo(() => {
     return listActivitiesByUser()
@@ -640,7 +693,14 @@ export default function Axis() {
       return;
     }
 
-    const quotePrompt = buildQuotePromptFromAxisText(text);
+    let quotePrompt = buildQuotePromptFromAxisText(text);
+
+    if (resolvedContact && !quotePrompt.toLowerCase().includes(resolvedContact.fullName.toLowerCase())) {
+      quotePrompt = `Contacto: ${resolvedContact.fullName}\nCliente: ${resolvedAccount?.nombreComercial || resolvedAccount?.razonSocial || ''}\n${quotePrompt}`;
+    } else if (resolvedAccount && !quotePrompt.toLowerCase().includes((resolvedAccount.nombreComercial || resolvedAccount.razonSocial).toLowerCase())) {
+      quotePrompt = `Cliente: ${resolvedAccount.nombreComercial || resolvedAccount.razonSocial}\n${quotePrompt}`;
+    }
+
     localStorage.setItem("axis_quote_prompt", quotePrompt);
 
     window.dispatchEvent(
@@ -1026,17 +1086,14 @@ export default function Axis() {
                 >
                   <option value="">
                     {detectedContact
-                      ? `Detectado: ${getContactDisplayName(detectedContact)}`
+                      ? `Detectado: ${getContactPersonName(detectedContact)}`
                       : "Seleccionar contacto manualmente..."}
                   </option>
 
                   {axisContacts.map((contact: any) => {
-                    const account = axisAccounts.find((a: any) => a.id === contact.accountId);
-
                     return (
                       <option key={contact.id} value={contact.id}>
-                        {getContactDisplayName(contact)}
-                        {account ? ` · ${account.nombreComercial || account.razonSocial}` : ""}
+                        {getContactPersonName(contact)}
                       </option>
                     );
                   })}

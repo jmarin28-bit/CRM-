@@ -300,10 +300,12 @@ export type QuoteItemType = 'producto' | 'servicio' | 'gasto';
 
 export type QuoteUnit =
   | 'unidad'
+  | 'producto'
   | 'hora'
   | 'dia'
   | 'servicio'
   | 'lote'
+  | 'global'
   | 'otro';
 
 export interface QuoteTerms {

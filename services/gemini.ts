@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { AccountV2, ContactV2, ActivityV2, OpportunityV2 } from "../types";
 
 /**
@@ -55,49 +54,33 @@ export const getRawApiKey = (): string => {
   );
 };
 
-export const callGeminiREST = async (
-  modelId: string,
-  contents: any,
-  config?: any
+export const getOpenRouterApiKey = (): string => {
+  return (
+    process.env.OPENROUTER_API_KEY ||
+    (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_OPENROUTER_API_KEY) ||
+    ""
+  );
+};
+
+export const callOpenRouterREST = async (
+  prompt: string,
+  modelId: string = "openrouter/free"
 ): Promise<string> => {
-  const apiKey = getRawApiKey();
-  if (!apiKey) {
-    throw new Error("Clave GEMINI_API_KEY no configurada en tu archivo .env.");
-  }
+  const apiKey = getOpenRouterApiKey();
+  if (!apiKey) throw new Error("Clave OPENROUTER_API_KEY no configurada.");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-goog-api-key": apiKey,
-  };
-
-  let formattedContents: any[];
-  if (typeof contents === "string") {
-    formattedContents = [{ parts: [{ text: contents }] }];
-  } else if (Array.isArray(contents)) {
-    formattedContents = contents.map((item) => {
-      if (typeof item === "string") return { parts: [{ text: item }] };
-      if (item.text) return { parts: [{ text: item.text }] };
-      if (item.inlineData) return { parts: [{ inlineData: item.inlineData }] };
-      return item;
-    });
-  } else {
-    formattedContents = [contents];
-  }
-
-  const bodyPayload: any = {
-    contents: formattedContents,
-  };
-
-  if (config) {
-    bodyPayload.generationConfig = config;
-  }
-
-  const res = await fetch(url, {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers,
-    body: JSON.stringify(bodyPayload),
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "Ioncore CRM",
+    },
+    body: JSON.stringify({
+      model: modelId,
+      messages: [{ role: "user", content: prompt }],
+    }),
   });
 
   if (!res.ok) {
@@ -107,19 +90,89 @@ export const callGeminiREST = async (
   }
 
   const data = await res.json();
-  const textResp = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return textResp || "";
+  return data.choices?.[0]?.message?.content || "";
 };
 
-const getAI = () => {
-  const apiKey = getRawApiKey();
-
-  if (!apiKey) {
-    console.warn("Gemini API Key not configured in environment.");
-    return null;
+export const callGeminiREST = async (
+  modelId: string,
+  contents: any,
+  config?: any
+): Promise<string> => {
+  // Si hay clave de OpenRouter configurada, usar OpenRouter free router
+  const openRouterKey = getOpenRouterApiKey();
+  if (openRouterKey) {
+    let textPrompt = "";
+    if (typeof contents === "string") textPrompt = contents;
+    else if (Array.isArray(contents)) textPrompt = contents.map(c => typeof c === 'string' ? c : c.text || '').join('\n');
+    else textPrompt = JSON.stringify(contents);
+    return callOpenRouterREST(textPrompt);
   }
-  return new GoogleGenAI({ apiKey });
+
+  const apiKey = getRawApiKey();
+  if (!apiKey) {
+    throw new Error("Ninguna clave de IA (OPENROUTER_API_KEY o GEMINI_API_KEY) está configurada en .env.");
+  }
+
+
+  try {
+    const isAQKey = apiKey.startsWith('AQ.');
+    const baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+    const url = isAQKey ? baseUrl : `${baseUrl}?key=${encodeURIComponent(apiKey)}`;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    };
+
+    let formattedContents: any[];
+    if (typeof contents === "string") {
+      formattedContents = [{ parts: [{ text: contents }] }];
+    } else if (Array.isArray(contents)) {
+      formattedContents = contents.map((item) => {
+        if (typeof item === "string") return { parts: [{ text: item }] };
+        if (item.text) return { parts: [{ text: item.text }] };
+        if (item.inlineData) return { parts: [{ inlineData: item.inlineData }] };
+        return item;
+      });
+    } else {
+      formattedContents = [contents];
+    }
+
+    const bodyPayload: any = { contents: formattedContents };
+    if (config) bodyPayload.generationConfig = config;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(bodyPayload),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData?.error?.message || `HTTP ${res.status} ${res.statusText}`;
+      if (openRouterKey) {
+        console.warn("Gemini REST falló, derivando a OpenRouter:", msg);
+        let textPrompt = typeof contents === "string" ? contents : JSON.stringify(contents);
+        return callOpenRouterREST(textPrompt);
+      }
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    const textResp = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    return textResp || "";
+  } catch (err: any) {
+    if (openRouterKey) {
+      console.warn("Gemini REST error, usando fallback OpenRouter:", err.message);
+      let textPrompt = typeof contents === "string" ? contents : JSON.stringify(contents);
+      return callOpenRouterREST(textPrompt);
+    }
+    throw err;
+  }
 };
+
+
+
 
 export const analyzeDealScore = async (
   opp: OpportunityV2,
@@ -127,8 +180,7 @@ export const analyzeDealScore = async (
   contact?: ContactV2,
   lastActivity?: ActivityV2
 ): Promise<{ score: number; justification: string; suggestedAction: string }> => {
-  const ai = getAI();
-  const modelId = "gemini-3-flash-preview";
+  const modelId = "openrouter/free";
 
   const prompt = `
     Eres el Agente de Inteligencia Comercial Senior de Ioncore SAS. Tu especialidad es el Análisis Predictivo de Ventas.
@@ -156,24 +208,8 @@ export const analyzeDealScore = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            score: { type: Type.NUMBER },
-            reasoning: { type: Type.STRING },
-            recommended_action: { type: Type.STRING },
-          },
-          required: ["score", "reasoning", "recommended_action"],
-        },
-      },
-    });
-
-    const result = JSON.parse(cleanJsonString(response.text || "{}"));
+    const rawText = await callGeminiREST(modelId, prompt);
+    const result = parseModelJson<any>(rawText) || {};
     return {
       score: result.score || 0,
       justification: result.reasoning || "Análisis pendiente.",
@@ -188,7 +224,6 @@ export const analyzeDealScore = async (
 export const parseBulkData = async (
   inputText: string
 ): Promise<{ accounts: AccountV2[]; contacts: ContactV2[] }> => {
-  const ai = getAI();
   const modelId = "gemini-3-flash-preview"; 
 
   const prompt = `
@@ -213,50 +248,8 @@ export const parseBulkData = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            accounts: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  razonSocial: { type: Type.STRING },
-                  nombreComercial: { type: Type.STRING },
-                  nit: { type: Type.STRING },
-                  sector: { type: Type.STRING },
-                  ciudad: { type: Type.STRING },
-                  direccion: { type: Type.STRING },
-                },
-              },
-            },
-            contacts: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  accountId: { type: Type.STRING },
-                  fullName: { type: Type.STRING },
-                  role: { type: Type.STRING },
-                  email: { type: Type.STRING },
-                  phone: { type: Type.STRING },
-                  whatsapp: { type: Type.STRING },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const result = JSON.parse(cleanJsonString(response.text || "{}"));
+    const rawText = await callGeminiREST(modelId, prompt);
+    const result = parseModelJson<any>(rawText) || {};
     
     const accounts = (result.accounts || []).map((acc: any) => ({
       ...acc,
@@ -275,8 +268,6 @@ export const getSmartResponse = async (
   contextData: { accounts: AccountV2[]; contacts: ContactV2[]; activities: ActivityV2[] },
   file?: { mimeType: string; data: string }
 ): Promise<string> => {
-  const ai = getAI();
-  // Use gemini-3.1-pro-preview for complex reasoning and multimodal tasks as requested
   const modelId = "gemini-3.1-pro-preview";
 
   // Context is important for "Identificar la Empresa y el Contacto"
@@ -341,16 +332,131 @@ export const getSmartResponse = async (
       });
     }
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: contents,
-    });
-    return response.text || "Lo siento, no pude procesar tu solicitud.";
+    const responseText = await callGeminiREST(modelId, contents);
+    return responseText || "Lo siento, no pude procesar tu solicitud.";
   } catch (error) {
     console.error("Gemini Chat Error:", error);
     return "Tuve un problema conectando con el servidor de inteligencia Ioncore. Verifica tu conexión o el archivo adjunto.";
   }
 };
+
+/**
+ * Función local de extracción de campos de un PDF del RUT (DIAN Colombia Formulario 001).
+ * Funciona offline leyendo la estructura interna del PDF cuando el backend o Gemini no están disponibles.
+ */
+export function parseRutPdfLocally(base64Data: string): {
+  razon_social?: string;
+  nombre_comercial?: string;
+  nit?: string;
+  ciudad?: string;
+  direccion?: string;
+  email?: string;
+  telefono?: string;
+} {
+  try {
+    const binStr = atob(base64Data);
+    const textFragments: string[] = [];
+
+    // 1. Fragmentos de texto dentro de paréntesis en corrientes PDF: (...)
+    const parenRegex = /\(([^()]{1,250})\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = parenRegex.exec(binStr)) !== null) {
+      const t = match[1].trim();
+      if (t && !t.includes("00000 65536") && !t.startsWith("/") && t.length > 1) {
+        textFragments.push(t);
+      }
+    }
+
+    // 2. Fragmentos hex en corrientes PDF: <...>
+    const hexRegex = /<([0-9A-Fa-f]{4,500})>/g;
+    while ((match = hexRegex.exec(binStr)) !== null) {
+      try {
+        const hex = match[1];
+        let decoded = "";
+        for (let i = 0; i < hex.length; i += 2) {
+          const code = parseInt(hex.substr(i, 2), 16);
+          if (code >= 32 && code <= 126) decoded += String.fromCharCode(code);
+        }
+        if (decoded.trim().length > 2) {
+          textFragments.push(decoded.trim());
+        }
+      } catch {}
+    }
+
+    const fullRawText = textFragments.join(" ");
+
+    let razon_social = "";
+    let nit = "";
+    let direccion = "";
+    let ciudad = "";
+    let email = "";
+    let telefono = "";
+    let nombre_comercial = "";
+
+    // Extraer NIT (Casilla 5: 9 a 10 dígitos, a veces separados por espacios en el formulario DIAN)
+    const nitSpacedMatch = fullRawText.match(/\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/);
+    if (nitSpacedMatch) {
+      nit = nitSpacedMatch[1].replace(/\s+/g, "");
+    } else {
+      const nitDirect = fullRawText.match(/\b([89]\d{8,9})\b/);
+      if (nitDirect) nit = nitDirect[1];
+    }
+
+    // DV (Casilla 6)
+    const dvMatch = fullRawText.match(/\b([89]\d{8,9})\s*(\d)\b/);
+    if (dvMatch && nit && dvMatch[2].length === 1 && !nit.includes("-")) {
+      nit = `${nit}-${dvMatch[2]}`;
+    }
+
+    // Extraer Razón Social (Casilla 35 - Empresa con S.A.S., LTDA, S.A., E.U., etc. o Persona Natural)
+    const empresaMatch = fullRawText.match(/\b([A-Z0-9\s.\-&]{3,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?|INC|CORP))\b/i);
+    if (empresaMatch) {
+      razon_social = empresaMatch[1].replace(/\s+/g, " ").trim();
+    } else {
+      const cas35Match = fullRawText.match(/(?:35\s+|Razón\s*Social[:\s]*)([A-Z0-9\s.\-&]{3,60})/i);
+      if (cas35Match && !cas35Match[1].toLowerCase().includes("casilla")) {
+        razon_social = cas35Match[1].trim();
+      }
+    }
+
+    // Extraer Dirección (Casilla 41: CR, CARRERA, CL, CALLE, AV, TV, DG, etc.)
+    const dirMatch = fullRawText.match(/\b((?:CR|CARRERA|CL|CALLE|AV|AVENIDA|TV|TRANSVERSAL|DG|DIAGONAL|AUTOPISTA|KM)\s+[A-Z0-9\s#\-.,]{5,60})\b/i);
+    if (dirMatch) {
+      direccion = dirMatch[1].replace(/\s+/g, " ").trim();
+    }
+
+    // Extraer Ciudad (Casilla 40)
+    const ciudadMatch = fullRawText.match(/\b(Bogot[aá],?\s*D\.?C\.?|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|Cúcuta|Ibagué|Neiva|Santa Marta|Villavicencio|Rionegro|Envigado|Itagüí|Chía|Soacha)\b/i);
+    if (ciudadMatch) {
+      ciudad = ciudadMatch[1].trim();
+    }
+
+    // Extraer Email (Casilla 42)
+    const emailMatch = fullRawText.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/);
+    if (emailMatch) {
+      email = emailMatch[1].toLowerCase().trim();
+    }
+
+    // Extraer Teléfono (Casilla 44: Celular colombiano 10 dígitos)
+    const telSpaced = fullRawText.match(/\b(3\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/);
+    if (telSpaced) {
+      telefono = telSpaced[1].replace(/\s+/g, "");
+    }
+
+    return {
+      razon_social,
+      nombre_comercial,
+      nit,
+      ciudad,
+      direccion,
+      email,
+      telefono
+    };
+  } catch (e) {
+    console.error("Error al parsear el RUT localmente:", e);
+    return {};
+  }
+}
 
 export const extractRutData = async (file: {
   mimeType: string;
@@ -361,25 +467,90 @@ export const extractRutData = async (file: {
   nit?: string;
   ciudad?: string;
   direccion?: string;
+  email?: string;
+  telefono?: string;
 }> => {
+  function cleanVal(v: any): string {
+    if (!v || typeof v !== "string") return "";
+    const invalid = [
+      "primer apellido",
+      "segundo apellido",
+      "otros nombres",
+      "tipo",
+      "sin perjuicio",
+      "casilla",
+    ];
+    const val = v.trim();
+    if (invalid.some((i) => val.toLowerCase().includes(i))) return "";
+    if (val.length < 2) return "";
+    return val;
+  }
+
+  function buildResult(parsed: any, fallback?: any): {
+    razon_social?: string; nombre_comercial?: string; nit?: string;
+    ciudad?: string; direccion?: string; email?: string; telefono?: string;
+  } {
+    const fb = fallback || {};
+    return {
+      razon_social: cleanVal(parsed.razon_social) || fb.razon_social || "",
+      nombre_comercial: cleanVal(parsed.nombre_comercial) || fb.nombre_comercial || "",
+      nit: cleanVal(parsed.nit) ? String(parsed.nit).replace(/[^\d\-]/g, "") : fb.nit || "",
+      ciudad: cleanVal(parsed.ciudad) || fb.ciudad || "",
+      direccion: cleanVal(parsed.direccion) || fb.direccion || "",
+      email: cleanVal(parsed.email) || fb.email || "",
+      telefono: cleanVal(parsed.telefono) || fb.telefono || "",
+    };
+  }
+
+  // ── 1. PRIMARIO: Backend /api/extract-rut (usa pdf-parse + Gemini API con Bearer auth) ──
+  // El backend extrae texto real del PDF con pdf-parse (funciona offline, sin API key)
+  // y luego opcionalmente lo enriquece con Gemini API usando headers Bearer.
+  let backendWarning: string | null = null;
   try {
+    console.log("[RUT Client] 📤 Enviando PDF al backend /api/extract-rut...");
     const res = await fetch("/api/extract-rut", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(file),
     });
+
+    console.log(`[RUT Client] 📡 HTTP Status del backend: ${res.status} ${res.statusText}`);
     const result = await res.json();
-    if (result.success && result.data) {
-      return result.data;
-    }
-    if (result.error) {
-      throw new Error(result.error);
+    console.log("[RUT Client] 📥 Respuesta del backend:", result);
+
+    if (!res.ok || result.success === false) {
+      const errMsg = result.error || `Error HTTP ${res.status} del backend`;
+      console.error("[RUT Client] ❌ Error del Backend:", errMsg);
+      backendWarning = errMsg;
+    } else {
+      const hasAnyField = result.data && (result.data.razon_social || result.data.nit || result.data.email || result.data.direccion || result.data.ciudad);
+      if (result.success && hasAnyField) {
+        return buildResult(result.data);
+      }
+
+      if (result.warning) {
+        backendWarning = result.warning;
+        console.warn("[RUT Client] ⚠️ Advertencia del Backend:", result.warning);
+      }
     }
   } catch (err: any) {
-    if (err.message) throw err;
+    console.error("[RUT Client] ❌ Error conectando con backend /api/extract-rut:", err.message);
+    if (!backendWarning) backendWarning = err.message;
   }
-  throw new Error("No se pudo extraer información del RUT. Diligencie los campos manualmente.");
+
+
+  // ── 2. ÚLTIMO RECURSO: Extracción local por patrones en el cliente ──
+  const localData = parseRutPdfLocally(file.data);
+  if (localData.razon_social || localData.nit) {
+    console.log("[RUT Client] 📄 RUT extraído mediante procesador local DIAN:", localData);
+    return localData;
+  }
+
+  throw new Error(backendWarning || "No se pudo leer automáticamente este RUT. Asegúrate de subir el PDF original descargado de la DIAN o ingresa los datos manualmente.");
 };
+
+
+
 
 export const generateAIEmailResponse = async (
   contactName: string,
@@ -388,8 +559,7 @@ export const generateAIEmailResponse = async (
   lastEmailText: string,
   promptTopic: string
 ): Promise<string> => {
-  const ai = getAI();
-  const modelId = "gemini-3-flash-preview";
+  const modelId = "openrouter/free";
 
   const prompt = `
     Eres un Asesor de Ventas Profesional en Ioncore SAS.
@@ -410,17 +580,14 @@ export const generateAIEmailResponse = async (
     - Redacta en español formal de negocios.
     - Sé conciso, claro y profesional.
     - Termina con una firma profesional que incluya marcadores de posición para tu nombre y datos.
-    - Devuelve únicamente el cuerpo del correo redactado, listo para ser copiado o enviado (puedes usar etiquetas HTML básicas como <p> o <br> si es necesario, pero prefiere texto plano con saltos de línea legibles). No incluyas asunto ni explicaciones adicionales.
+    - Devuelve únicamente el cuerpo del correo redactado, listo para ser copiado o enviado.
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-    });
-    return response.text || "Estimado(a) " + contactName + ",\n\nEspero que se encuentre muy bien.\n\nAtentamente,\nEquipo de Ventas Ioncore";
+    const responseText = await callOpenRouterREST(prompt, modelId);
+    return responseText || ("Estimado(a) " + contactName + ",\n\nEspero que se encuentre muy bien.\n\nAtentamente,\nEquipo de Ventas Ioncore");
   } catch (error) {
-    console.error("Gemini Email Response Error:", error);
+    console.error("OpenRouter Email Response Error:", error);
     return "Estimado(a) " + contactName + ",\n\nEspero que se encuentre muy bien.\n\nAtentamente,\nEquipo de Ventas Ioncore";
   }
 };
@@ -430,8 +597,7 @@ export const generateAIWhatsAppResponse = async (
   companyName: string,
   promptTopic: string
 ): Promise<string> => {
-  const ai = getAI();
-  const modelId = "gemini-3-flash-preview";
+  const modelId = "openrouter/free";
 
   const prompt = `
     Eres un Asesor Comercial Profesional en Ioncore SAS.
@@ -452,13 +618,10 @@ export const generateAIWhatsAppResponse = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-    });
-    return response.text || "Hola " + contactName + ", espero que te encuentres muy bien. ¿Cómo podemos apoyarte hoy desde Ioncore SAS?";
+    const responseText = await callOpenRouterREST(prompt, modelId);
+    return responseText || ("Hola " + contactName + ", espero que te encuentres muy bien. ¿Cómo podemos apoyarte hoy desde Ioncore SAS?");
   } catch (e) {
-    console.error("Error generating WhatsApp response with AI:", e);
+    console.error("Error generating WhatsApp response with OpenRouter:", e);
     return "Hola " + contactName + ", espero que te encuentres muy bien. ¿Cómo podemos apoyarte hoy desde Ioncore SAS?";
   }
 };

@@ -186,25 +186,111 @@ const keepOnlyProductDescription = (value: string) => {
   return result.replace(/\s+/g, " ").trim();
 };
 
-const detectQuoteTypeFromPrompt = (text: string): QuoteType => {
-  const t = normalizeText(text);
+const detectQuoteTypeFromPrompt = (text: string, accountName?: string): QuoteType => {
+  let t = normalizeText(text);
 
-  if (/\bproducto\b/.test(t)) return "producto";
-  if (/\bservicio\b/.test(t)) return "servicio";
+  // Limpiar campos de metadatos (Cliente: ..., Contacto: ...)
+  t = t.replace(/cliente\s*:\s*[^\n\r]+/gi, "");
+  t = t.replace(/contacto\s*:\s*[^\n\r]+/gi, "");
+
+  if (accountName) {
+    const normAcc = normalizeText(accountName);
+    t = t.replace(normAcc, "");
+  }
+
+  // Ignorar nombres de empresas y títulos comunes que contienen "servicio"
+  t = t.replace(/\bservicios?\s+geol[oó]gicos?\b/gi, "");
+  t = t.replace(/\bservicios?\s+geol[oó]gicos?\s+colombianos?\b/gi, "");
+  t = t.replace(/\bservicios?\s+ambientales?\b/gi, "");
+  t = t.replace(/\bservicios?\s+farmac[eé]uticos?\b/gi, "");
+  t = t.replace(/\bservicios?\s+anal[ií]ticos?\b/gi, "");
+  t = t.replace(/\bservicios?\s+t[eé]cnicos?\b/gi, "");
+
+  // Si contiene productos explícitos y no tiene acciones de servicio explícitas:
+  if (/\b(producto|productos|suministro|suministros|repuesto|repuestos|consumible|consumibles|filtro|filtros|jeringa|jeringas|columna|columnas|vial|viales|kit|kits|l[aá]mpara|l[aá]mparas|bomba|bombas|sello|sellos|oring|o-ring|frits|cap|piston|needle|seat|liner|ferrule|septa|tubo|tubing|fluid|oil|torch|injector|cone|valve|v[aá]lvula)\b/i.test(t)) {
+    if (!/\b(mantenimiento|mantenimientos|correctivo|correctivos|preventivo|preventivos|capacitaci[oó]n|calificaci[oó]n|oq|pv|dq|iq|diagn[oó]stico|instalaci[oó]n|soporte|visita|mano de obra|metodolog[ií]a|metodolog[ií]as)\b/i.test(t)) {
+      return "producto";
+    }
+  }
 
   if (
-    t.includes("mantenimiento") ||
-    t.includes("diagnostico") ||
-    t.includes("instalacion") ||
-    t.includes("soporte") ||
-    t.includes("capacitacion") ||
-    t.includes("visita tecnica") ||
-    t.includes("mano de obra")
+    /\b(mantenimiento|mantenimientos|correctivo|correctivos|preventivo|preventivos|capacitaci[oó]n|capacitaciones|calificaci[oó]n|calificaciones|oq|pv|dq|iq|diagn[oó]stico|diagnosticos|instalaci[oó]n|instalaciones|soporte|visita|visitas|mano de obra|metodolog[ií]a|metodolog[ií]as)\b/i.test(t)
   ) {
     return "servicio";
   }
 
   return "producto";
+};
+
+const getQuoteUnitHeaderLabel = (items?: QuoteItem[]): string => {
+  if (!items || items.length === 0) return "Cant.";
+  const units = new Set(items.map((i) => i.unit));
+  if (units.size === 1) {
+    const singleUnit = items[0].unit;
+    if (singleUnit === 'hora') return "Cant. (hora)";
+    if (singleUnit === 'dia') return "Cant. (días)";
+    if (singleUnit === 'servicio') return "Cant. (servicio)";
+    if (singleUnit === 'lote') return "Cant. (lote)";
+    if (singleUnit === 'global') return "Cant. (global)";
+  }
+  return "Cant.";
+};
+
+const detectItemTypeAndUnit = (description: string, overallQuoteType?: QuoteType): { itemType: QuoteItemType; unit: QuoteUnit } => {
+  const norm = normalizeText(description || "");
+
+  // Catálogo completo de SERVICIOS (Imagen 3)
+  const isServiceKeyword =
+    /\b(mantenimiento\s+preventivo|mantenimiento\s+correctivo|mantenimiento|mantenimientos|correctivo|correctivos|preventivo|preventivos|capacitaci[oó]n\s+virtual|capacitaci[oó]n|capacitaciones|calificaci[oó]n\s+operacional|calificaci[oó]n|calificaciones|calificacion|oq|pv|dq|iq|diagn[oó]stico|diagnostico|diagnosticos|diagn[oó]sticos|metodolog[ií]a|metodolog[ií]as|metodologia|metodologias|instalaci[oó]n|instalacion|instalaciones|soporte|visita|visitas|mano\s+de\s+obra|reparaci[oó]n|reparacion|reparaciones|asesor[ií]a|asesoria|consultor[ií]a|consultoria|servicio|servicios|asistencia|verificaci[oó]n|verificacion|puesta\s+en\s+marcha)\b/i.test(norm);
+
+  // Catálogo completo de PRODUCTOS / PARTES / CONSUMIBLES / EQUIPOS (Imagen 2)
+  const isProductSupplyKeyword =
+    /\b(suministro|suministros|compra|adquisici[oó]n|jeringa|jeringas|syringe|syringes|filtro|filtros|filter|filters|frit|frits|ptfe|columna|columnas|column|columns|sello|sellos|seal|seals|o-ring|oring|o\s+ring|gasket|gaskets|aguja|agujas|needle|needles|seat|piston|pistones|plunger|plungers|stator|lampara|lámpara|lamparas|lámparas|lamp|lamps|deuterium|tungsten|valvula|válvula|valvulas|válvulas|valve|valves|diaphragm|diafragma|kit|kits|liner|liners|ferrule|ferrules|septa|septas|septum|vial|viales|frasco|frascos|ampolla|ampollas|ampoule|aceite|oil|fluid|fluido|coolant|solution|soluci[oó]n|purifier|purificador|torch|antorcha|inyector|injector|cone|conos|skimmer|sampler|chamber|c[aá]mara|equipo|equipos|consumible|consumibles|repuesto|repuestos|accesorio|accesorios|reactivo|reactivos|parte|partes|malla|mesh|tube|tubo|tubing|beads|perlas|plate|placa|coil|bobina|filament|filamento|foot|pata|port|puerto|pca|board|placa|gas)\b/i.test(norm);
+
+  // 1. Si contiene palabras clave de PRODUCTO y NO de servicio -> PRODUCTO
+  if (isProductSupplyKeyword && !isServiceKeyword) {
+    let unit: QuoteUnit = 'unidad';
+    if (/\b(lote|lotes|caja|cajas|pack|pkg)\b/i.test(norm)) {
+      unit = 'lote';
+    }
+    return { itemType: 'producto', unit };
+  }
+
+  // 2. Si contiene palabras clave de SERVICIO -> SERVICIO
+  if (isServiceKeyword) {
+    let unit: QuoteUnit = 'servicio';
+    if (/\b(hora|horas|hrs?)\b/i.test(norm)) {
+      unit = 'hora';
+    } else if (/\b(dia|dias|días)\b/i.test(norm)) {
+      unit = 'dia';
+    } else if (/\b(lote|lotes)\b/i.test(norm)) {
+      unit = 'lote';
+    }
+    return { itemType: 'servicio', unit };
+  }
+
+  // 3. Fallback si coincide con catálogo de producto
+  if (isProductSupplyKeyword) {
+    let unit: QuoteUnit = 'unidad';
+    if (/\b(lote|lotes|caja|cajas|pack|pkg)\b/i.test(norm)) {
+      unit = 'lote';
+    }
+    return { itemType: 'producto', unit };
+  }
+
+  // 4. Si la cotización general es de tipo servicio (y no es un nombre de cliente):
+  if (overallQuoteType === 'servicio') {
+    let unit: QuoteUnit = 'servicio';
+    if (/\b(hora|horas|hrs?)\b/i.test(norm)) {
+      unit = 'hora';
+    } else if (/\b(dia|dias|días)\b/i.test(norm)) {
+      unit = 'dia';
+    }
+    return { itemType: 'servicio', unit };
+  }
+
+  // 5. Fallback por defecto: Producto / Unidad
+  return { itemType: 'producto', unit: 'unidad' };
 };
 
 const detectCurrencyFromPrompt = (text: string): QuoteCurrency => {
@@ -1131,14 +1217,21 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
 
     // Prellenar items desde los datos extraídos
     if (pendingQuoteData.items && Array.isArray(pendingQuoteData.items)) {
-      newDraft.items = pendingQuoteData.items.map((item: any) => ({
-        id: `item_${Date.now()}_${Math.random()}`,
-        code: item.code || '',
-        description: item.description || '',
-        quantity: item.quantity || 1,
-        unitPrice: item.unitValue || 0,
-        itemType: 'producto' as QuoteItemType,
-      }));
+      newDraft.items = pendingQuoteData.items.map((item: any) => {
+        const { itemType, unit } = detectItemTypeAndUnit(item.description || '', newDraft.type);
+        const qty = item.quantity || 1;
+        const price = item.unitValue || 0;
+        return {
+          id: `item_${Date.now()}_${Math.random()}`,
+          code: item.code || '',
+          description: item.description || '',
+          quantity: qty,
+          unitPrice: price,
+          total: qty * price,
+          itemType,
+          unit,
+        };
+      });
     }
 
     // Intentar encontrar la empresa desde el nombre en los datos
@@ -1162,6 +1255,14 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
       });
       if (foundContact) {
         newDraft.contactId = foundContact.id;
+      }
+    }
+
+    // Si tenemos empresa pero no se seleccionó contacto explícito, auto-seleccionar el contacto principal
+    if (newDraft.accountId && !newDraft.contactId) {
+      const accountContacts = allContacts.filter((c: ContactV2) => c.accountId === newDraft.accountId);
+      if (accountContacts.length > 0) {
+        newDraft.contactId = accountContacts[0].id;
       }
     }
 
@@ -1292,13 +1393,14 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
 
             if (!code && !description && unitPrice === 0) return null;
 
+            const { itemType, unit } = detectItemTypeAndUnit(description || '');
             return {
               id: crypto.randomUUID(),
-              itemType: "producto" as QuoteItemType,
+              itemType,
               code,
               description: description || "Producto por definir",
               quantity,
-              unit: "unidad" as QuoteUnit,
+              unit,
               currency: detectedCurrency,
               unitPrice,
               taxRate: 19,
@@ -1328,6 +1430,12 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
         // 4. Si tenemos empresa pero no contacto, buscar contacto asociado a esa empresa
         if (account && !contact) {
           contact = findContactFromPrompt(clientName || prompt, activeContacts, account.id);
+          if (!contact) {
+            const accContacts = activeContacts.filter(c => c.accountId === account!.id);
+            if (accContacts.length > 0) {
+              contact = accContacts[0];
+            }
+          }
         }
 
         // Si no encontramos contacto ni empresa pero tenemos clientName, crear datos temporales
@@ -1420,11 +1528,6 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
       // ============================================================
       // FORMATO NATURAL / LIBRE (parser original — NO SE TOCA)
       // ============================================================
-      const detectedType = detectQuoteTypeFromPrompt(prompt);
-      const detectedCurrency = detectCurrencyFromPrompt(prompt);
-      const detectedPayment = detectPaymentTermsFromPrompt(prompt);
-      const detectedValidity = detectValidityFromPrompt(prompt);
-
       let account = findAccountFromPrompt(prompt, accounts);
       let contact = findContactFromPrompt(prompt, allContacts, account?.id);
 
@@ -1438,7 +1541,19 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
 
       if (account && !contact) {
         contact = findContactFromPrompt(prompt, allContacts, account.id);
+        if (!contact) {
+          const accContacts = allContacts.filter(c => c.accountId === account!.id);
+          if (accContacts.length > 0) {
+            contact = accContacts[0];
+          }
+        }
       }
+
+      const accountNameStr = account ? (account.nombreComercial || account.razonSocial) : undefined;
+      const detectedType = detectQuoteTypeFromPrompt(prompt, accountNameStr);
+      const detectedCurrency = detectCurrencyFromPrompt(prompt);
+      const detectedPayment = detectPaymentTermsFromPrompt(prompt);
+      const detectedValidity = detectValidityFromPrompt(prompt);
 
       const isService = detectedType === "servicio";
 
@@ -1478,13 +1593,15 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
             productFallback ||
             (isService ? "Servicio por definir" : "Producto por definir");
 
+          const { itemType, unit } = detectItemTypeAndUnit(finalDescription, detectedType);
+
           return {
             id: crypto.randomUUID(),
-            itemType: (isService ? "servicio" : "producto") as QuoteItemType,
+            itemType,
             code: itemCode || "",
             description: finalDescription,
             quantity: qty,
-            unit: (isService ? "servicio" : "unidad") as QuoteUnit,
+            unit,
             currency: detectedCurrency,
             unitPrice: itemPrice,
             total: qty * itemPrice,
@@ -1991,7 +2108,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                   <th>Ítem</th>
                   <th>Código</th>
                   <th>Detalle</th>
-                  <th class="center">Cant.</th>
+                  <th class="center">${getQuoteUnitHeaderLabel(quote.items)}</th>
                   <th class="right">Valor Unitario (${quote.currency})</th>
                   <th class="right">Total (${quote.currency})</th>
                 </tr>
@@ -2299,7 +2416,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                   <th>Ítem</th>
                   <th>Código</th>
                   <th>Descripción</th>
-                  <th class="center">Cant. (${quote.items?.[0]?.unit || "servicio"})</th>
+                  <th class="center">${getQuoteUnitHeaderLabel(quote.items)}</th>
                   <th class="right">Valor Unitario (${quote.currency})</th>
                   <th class="right">Total (${quote.currency})</th>
                 </tr>
@@ -2532,18 +2649,26 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
     setDraft({ ...draft, items: [...(draft.items || []), newItem] });
   };
 
-  const handleItemChange = (id: string, field: keyof QuoteItem, value: any) => {
-    const items = [...(draft.items || [])];
-    const idx = items.findIndex(i => i.id === id);
-    if (idx === -1) return;
+  const handleItemChange = (id: string, fieldOrUpdates: keyof QuoteItem | Partial<QuoteItem>, value?: any) => {
+    setDraft((prev) => {
+      const items = [...(prev.items || [])];
+      const idx = items.findIndex((i) => i.id === id);
+      if (idx === -1) return prev;
 
-    const item = { ...items[idx], [field]: value };
-    const qty = Number(item.quantity) || 0;
-    const price = Number(item.unitPrice) || 0;
-    item.total = qty * price;
-    items[idx] = item;
+      let updatedItem: QuoteItem;
+      if (typeof fieldOrUpdates === "object" && fieldOrUpdates !== null) {
+        updatedItem = { ...items[idx], ...fieldOrUpdates };
+      } else {
+        updatedItem = { ...items[idx], [fieldOrUpdates as keyof QuoteItem]: value };
+      }
 
-    setDraft({ ...draft, items });
+      const qty = Number(updatedItem.quantity) || 0;
+      const price = Number(updatedItem.unitPrice) || 0;
+      updatedItem.total = qty * price;
+      items[idx] = updatedItem;
+
+      return { ...prev, items };
+    });
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -3817,10 +3942,11 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                           onChange={e => {
                             const accId = e.target.value;
                             const acc = accounts.find(a => a.id === accId);
+                            const accContacts = allContacts.filter(c => c.accountId === accId);
                             setDraft({
                               ...draft,
                               accountId: accId,
-                              contactId: "",
+                              contactId: accContacts[0]?.id || "",
                               opportunityId: "",
                               deliveryAddress: acc?.direccion || "",
                               deliveryCity: acc?.ciudad || ""
@@ -3978,9 +4104,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                               <th className="px-4 py-4 text-center w-[60px]">#</th>
                               <th className="px-6 py-4 text-left w-[180px]">Código</th>
                               <th className="px-6 py-4 text-left">{draft.type === "servicio" ? "Descripción del Servicio" : "Descripción"}</th>
-                              {draft.type === "servicio" && (
-                                <th className="px-4 py-4 text-center w-[100px]">Unidad</th>
-                              )}
+                              <th className="px-4 py-4 text-center w-[160px]">Unidad / Tipo</th>
                               <th className="px-6 py-4 text-center w-[100px]">Cant.</th>
                               <th className="px-6 py-4 text-right w-[140px]">V. Unitario</th>
                               <th className="px-6 py-4 text-right w-[140px]">Subtotal</th>
@@ -4006,24 +4130,41 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                                     className="w-full border border-transparent hover:border-slate-200 focus:border-blue-500 rounded p-2 text-xs outline-none"
                                     value={i.description}
                                     placeholder="Descripción..."
-                                    onChange={e => handleItemChange(i.id, 'description', e.target.value)}
+                                    onChange={(e) => {
+                                      const newDesc = e.target.value;
+                                      const detected = detectItemTypeAndUnit(newDesc, draft.type);
+                                      handleItemChange(i.id, {
+                                        description: newDesc,
+                                        itemType: detected.itemType,
+                                        unit: detected.unit,
+                                      });
+                                    }}
                                   />
                                 </td>
 
-                                {draft.type === "servicio" && (
-                                  <td className="p-2">
-                                    <select
-                                      className="w-full border-none focus:ring-0 text-xs text-center outline-none bg-transparent hover:bg-slate-50 rounded"
-                                      value={i.unit}
-                                      onChange={(e) => handleItemChange(i.id, "unit", e.target.value)}
-                                    >
-                                      <option value="hora">Hora</option>
-                                      <option value="dia">Día</option>
-                                      <option value="servicio">Servicio</option>
-                                      <option value="otro">Otro</option>
-                                    </select>
-                                  </td>
-                                )}
+                                <td className="p-2">
+                                  <select
+                                    className="w-full border border-slate-200 focus:ring-1 focus:ring-blue-500 text-xs text-center outline-none bg-white hover:bg-slate-50 rounded-lg py-1.5 px-2 font-medium text-slate-700"
+                                    value={i.unit || (i.itemType === 'servicio' ? 'servicio' : 'unidad')}
+                                    onChange={(e) => {
+                                      const val = e.target.value as QuoteUnit;
+                                      let newItemType: QuoteItemType = i.itemType;
+                                      if (val === 'servicio' || val === 'hora' || val === 'dia') {
+                                        newItemType = 'servicio';
+                                      } else if (val === 'unidad' || val === 'producto') {
+                                        newItemType = 'producto';
+                                      }
+                                      handleItemChange(i.id, { unit: val, itemType: newItemType });
+                                    }}
+                                  >
+                                    <option value="unidad">Producto / Unidad</option>
+                                    <option value="servicio">Servicio (Mano de obra)</option>
+                                    <option value="hora">Hora (Servicio)</option>
+                                    <option value="dia">Día (Servicio)</option>
+                                    <option value="lote">Lote</option>
+                                    <option value="otro">Otro</option>
+                                  </select>
+                                </td>
 
                                 <td className="p-2">
                                   <input

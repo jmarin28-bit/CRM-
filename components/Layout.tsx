@@ -65,13 +65,15 @@ const Layout: React.FC<LayoutProps> = ({
   };
 
   const fetchGoogleStatus = async () => {
-    // 1. Chequear estado local primero
+    // 1. Cargar cache local rápido si existe
     try {
       const saved = localStorage.getItem('crm_google_status') || localStorage.getItem('google_connected');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.connected) {
           setGoogleStatus({ connected: true, email: parsed.email });
+        } else {
+          setGoogleStatus({ connected: false });
         }
       }
     } catch (e) {}
@@ -84,6 +86,9 @@ const Layout: React.FC<LayoutProps> = ({
         setGoogleStatus(data);
         if (data && data.connected) {
           localStorage.setItem('crm_google_status', JSON.stringify(data));
+        } else {
+          localStorage.removeItem('crm_google_status');
+          localStorage.removeItem('google_connected');
         }
         return data;
       }

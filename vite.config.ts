@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react';
 
 import fs from 'fs';
 import zlib from 'zlib';
+import { createRequire } from 'module';
+const requireCJS = createRequire(import.meta.url);
 
 // Load environment variables and assign them to process.env
 const loadedEnv = loadEnv(process.env.NODE_ENV || 'development', '.', '');
@@ -12,24 +14,37 @@ const loadedEnv = loadEnv(process.env.NODE_ENV || 'development', '.', '');
 // literalmente el texto "undefined", que es truthy y se colaba como valor real
 // (así salía redirect_uri=undefined en la URL de Google). Por eso solo se
 // asigna cuando hay un valor de verdad.
+export function getFreshEnv(key: string): string {
+  const currentEnv = loadEnv(process.env.NODE_ENV || 'development', '.', '');
+  const val = (currentEnv[key] ?? process.env[key] ?? '').trim();
+  if (val) {
+    process.env[key] = val;
+  }
+  return val;
+}
+
 function setEnvIfPresent(key: string, value: string | undefined) {
-  const resolved = (value ?? process.env[key] ?? '').trim();
-  if (resolved) {
-    process.env[key] = resolved;
-  } else {
-    delete process.env[key];
+  const resolved = getFreshEnv(key);
+  if (!resolved && value) {
+    process.env[key] = value.trim();
   }
 }
 
 setEnvIfPresent('GOOGLE_CLIENT_ID', loadedEnv.GOOGLE_CLIENT_ID);
 setEnvIfPresent('GOOGLE_CLIENT_SECRET', loadedEnv.GOOGLE_CLIENT_SECRET);
 setEnvIfPresent('GOOGLE_REDIRECT_URI', loadedEnv.GOOGLE_REDIRECT_URI);
+setEnvIfPresent('MOCK_OAUTH', loadedEnv.MOCK_OAUTH);
 setEnvIfPresent('GEMINI_API_KEY', loadedEnv.GEMINI_API_KEY);
+setEnvIfPresent('VITE_GEMINI_API_KEY', loadedEnv.VITE_GEMINI_API_KEY);
+setEnvIfPresent('OPENROUTER_API_KEY', loadedEnv.OPENROUTER_API_KEY);
+setEnvIfPresent('VITE_OPENROUTER_API_KEY', loadedEnv.VITE_OPENROUTER_API_KEY);
+setEnvIfPresent('API_KEY', loadedEnv.API_KEY);
 
 console.log("─── Google OAuth Config ───────────────────────────");
-console.log("CLIENT_ID:", process.env.GOOGLE_CLIENT_ID || 'NO DEFINIDO');
-console.log("CLIENT_SECRET:", process.env.GOOGLE_CLIENT_SECRET ? process.env.GOOGLE_CLIENT_SECRET.substring(0, 8) + "..." : 'NO DEFINIDO');
-console.log("REDIRECT_URI:", process.env.GOOGLE_REDIRECT_URI || 'NO DEFINIDO (se calculará del host)');
+console.log("CLIENT_ID:", getFreshEnv('GOOGLE_CLIENT_ID') || 'NO DEFINIDO');
+console.log("CLIENT_SECRET:", getFreshEnv('GOOGLE_CLIENT_SECRET') ? getFreshEnv('GOOGLE_CLIENT_SECRET').substring(0, 8) + "..." : 'NO DEFINIDO');
+console.log("REDIRECT_URI:", getFreshEnv('GOOGLE_REDIRECT_URI') || 'NO DEFINIDO (se calculará del host)');
+console.log("MOCK_MODE:", isMockMode() ? 'ACTIVADO (Sandbox Mode)' : 'DESACTIVADO (Real Google OAuth)');
 console.log("───────────────────────────────────────────────────");
 
 // Fallback for online IDEs that block dotfiles (like .env)
@@ -297,7 +312,7 @@ function googleOAuthPlugin() {
           console.log("Redirect URI:", redirectUri);
           console.log("==================================");
           const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
-            client_id: process.env.GOOGLE_CLIENT_ID || '',
+            client_id: getFreshEnv('GOOGLE_CLIENT_ID'),
             redirect_uri: redirectUri,
             response_type: 'code',
             scope: [
@@ -435,20 +450,26 @@ function googleOAuthPlugin() {
           // ── OAuth real: intercambio de código por tokens ────────────────
           try {
             const redirectUri = getRedirectUri(req);
-            console.log("Callback Redirect URI:", redirectUri);
-            console.log("─── Token Exchange ────────────────────────────────");
-            console.log("client_id:", process.env.GOOGLE_CLIENT_ID || 'NO DEFINIDO');
-            console.log("redirect_uri:", redirectUri);
-            console.log("grant_type: authorization_code");
-            console.log("CLIENT_SECRET cargado correctamente:", process.env.GOOGLE_CLIENT_SECRET ? 'SI' : 'NO');
+            const rawClientId = getFreshEnv('GOOGLE_CLIENT_ID');
+            const rawClientSecret = getFreshEnv('GOOGLE_CLIENT_SECRET');
+            const secretMasked = rawClientSecret
+              ? `${rawClientSecret.substring(0, 10)}...${rawClientSecret.slice(-4)} (Longitud: ${rawClientSecret.length} chars)`
+              : 'NO DEFINIDO';
+
+            console.log("─── Token Exchange Diagnóstico ─────────────────────");
+            console.log("Client ID leído:", rawClientId || 'NO DEFINIDO');
+            console.log("Client Secret leído:", secretMasked);
+            console.log("Redirect URI:", redirectUri);
+            console.log("Grant Type: authorization_code");
             console.log("───────────────────────────────────────────────────");
+
             const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: new URLSearchParams({
                 code,
-                client_id: process.env.GOOGLE_CLIENT_ID || '',
-                client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+                client_id: rawClientId,
+                client_secret: rawClientSecret,
                 redirect_uri: redirectUri,
                 grant_type: 'authorization_code'
               })
@@ -471,6 +492,17 @@ function googleOAuthPlugin() {
                   'redirect_uri no autorizado',
                   'Google rechazó la conexión porque el redirect_uri no está registrado en Google Cloud Console.',
                   `redirect_uri usado: ${redirectUri}\n\nRespuesta de Google: ${errDetail}`
+                ));
+                return;
+              }
+
+              // invalid_client (Client Secret inválido) → instrucciones claras
+              if (errDetail.includes('invalid_client') || errText.includes('invalid_client') || tokenResponse.status === 401) {
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(oauthErrorPage(
+                  'GOOGLE_CLIENT_SECRET Inválido (HTTP 401)',
+                  `El GOOGLE_CLIENT_SECRET configurado en .env no es el secreto activo para el Client ID: ${rawClientId}.`,
+                  `Client ID leído: ${rawClientId}\nClient Secret leído: ${secretMasked}\n\nRespuesta de Google Cloud: ${errDetail}\n\nPASOS PARA CORREGIR:\n1. Ingresa a Google Cloud Console -> APIs & Services -> Credentials.\n2. Abre el cliente OAuth "CRM IONCORE" (${rawClientId}).\n3. Copia el nuevo "Secret de cliente" activo (creado el 11 de agosto de 2026).\n4. Actualiza en tu archivo .env: GOOGLE_CLIENT_SECRET=<NUEVO_CLIENT_SECRET>\n5. Reinicia el servidor dev (npm run dev).`
                 ));
                 return;
               }
@@ -582,14 +614,20 @@ function googleOAuthPlugin() {
           setCorsHeaders(req, res);
           const userId = url.searchParams.get('userId') || '';
           const contactEmail = url.searchParams.get('contactEmail') || '';
+          const tokens = getUserTokens(userId);
+          if (!tokens) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, connected: false, emails: [], message: 'Cuenta de Google no conectada' }));
+            return;
+          }
           try {
             const emails = await listGmailEmails(userId, contactEmail);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, emails }));
+            res.end(JSON.stringify({ success: true, connected: true, emails }));
           } catch (err: any) {
             console.error('[Emails Error]', err.message);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: err.message }));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, connected: false, emails: [], error: err.message }));
           }
           return;
         }
@@ -613,13 +651,19 @@ function googleOAuthPlugin() {
                 res.end(JSON.stringify({ success: false, error: 'Faltan campos requeridos: userId, to, subject, emailBody.' }));
                 return;
               }
+              const tokens = getUserTokens(userId);
+              if (!tokens) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, connected: false, error: 'La cuenta de Google no está conectada. Por favor autentícate primero.' }));
+                return;
+              }
               const result = await sendGmailEmail(userId, to, subject, emailBody);
               res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: true, id: result.id, threadId: result.threadId }));
+              res.end(JSON.stringify({ success: true, connected: true, id: result.id, threadId: result.threadId }));
             } catch (err: any) {
               console.error('[Send Email Error]', err.message);
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: err.message }));
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, connected: false, error: err.message }));
             }
           });
           return;
@@ -679,158 +723,283 @@ function googleOAuthPlugin() {
                 return;
               }
 
-              const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY || '';
+              const openRouterKey = process.env.OPENROUTER_API_KEY || '';
+              console.log('[RUT Backend] 📥 Solicitud recibida. Base64 length:', base64Data ? base64Data.length : 0);
+              console.log('[RUT Backend] 🔑 OPENROUTER_API_KEY disponible:', openRouterKey ? `SÍ (${openRouterKey.substring(0, 10)}...)` : 'NO');
+
               let rutResult: any = {};
-              let lastErr: any = null;
+              let pdfPages = 0;
+              let fullText = '';
+              let usedPdfParse = false;
+              let usedOpenRouterFallback = false;
 
-              if (apiKey) {
-                const models = ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-2.5-flash-preview', 'gemini-2.0-flash-lite-preview'];
-                const prompt = `Eres un extractor de datos especializado en el RUT (Registro Único Tributario) de la DIAN, Colombia. Extrae en formato JSON exacto: razon_social (Casilla 35), nombre_comercial (Casilla 36), nit (Casilla 5), ciudad (Casilla 40), direccion (Casilla 41). Solo responde el JSON.`;
 
-                for (const m of models) {
-                  try {
-                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`;
-                    const headers: Record<string, string> = {
-                      'Content-Type': 'application/json',
-                      'x-goog-api-key': apiKey,
-                    };
+              // ── PASO 1: Extracción local con pdf-parse (PRIMARIO) ──
+              try {
+                const pdfParse = requireCJS('pdf-parse');
+                const buf = Buffer.from(base64Data, 'base64');
+                let pdfData: any = null;
+                try {
+                  pdfData = await pdfParse(buf, { password: "" });
+                } catch (ePass) {
+                  pdfData = await pdfParse(buf);
+                }
+                pdfPages = pdfData.numpages || 1;
+                fullText = (pdfData.text || '').replace(/\s+/g, ' ').trim();
+                
+                console.log(`[RUT Backend] 📊 PDF pages: ${pdfPages}`);
+                console.log(`[RUT Backend] 📝 Extracted text length: ${fullText.length}`);
 
-                    const gRes = await fetch(apiUrl, {
-                      method: 'POST',
-                      headers,
-                      body: JSON.stringify({
-                        contents: [{
-                          parts: [
-                            { text: prompt },
-                            { inlineData: { mimeType: mimeType || 'application/pdf', data: base64Data } }
-                          ]
-                        }],
-                        generationConfig: { responseMimeType: 'application/json' }
-                      })
-                    });
+                if (fullText.length >= 50) {
+                  const cleanExtracted = (value: string) => {
+                    if (!value) return null;
+                    const invalid = ['primer apellido','segundo apellido','otros nombres','sin perjuicio','tipo','casilla','exportadoresusuarios'];
+                    const v = value.toLowerCase();
+                    if (invalid.some(i => v.includes(i))) return null;
 
-                    if (gRes.ok) {
-                      const gJson = await gRes.json();
-                      const txt = gJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                      const cleaned = txt.match(/\{[\s\S]*\}/)?.[0] || txt;
-                      const parsed = JSON.parse(cleaned);
-                      if (parsed && (parsed.razon_social || parsed.nit)) {
-                        rutResult = parsed;
-                        break;
-                      }
-                    } else {
-                      const errObj = await gRes.json().catch(() => ({}));
-                      lastErr = errObj?.error?.message || `HTTP ${gRes.status}`;
-                    }
-                  } catch (e: any) {
-                    lastErr = e.message;
+                    let cleaned = value;
+                    // Cortar si encuentra encabezados de tabla siguientes (36, 37, 38, UBICACION, 42 Correo o email con @)
+                    cleaned = cleaned.split(/\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|42\.|42\s*Correo|Correo|email|[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i)[0];
+
+                    return cleaned.replace(/\s{2,}/g, ' ').trim();
+                  };
+
+                  // 1. Razón Social (Patrón universal DIAN: Casilla 35 antecede a COLOMBIA 169)
+                  const matchColombia = fullText.match(/([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,80}?)\s+\bCOLOMBIA\b\s+(?:1\s*6\s*9|169)/i);
+
+                  if (matchColombia) {
+                    const rawRs = matchColombia[1]
+                      .replace(/^.*?(?:Persona\s+jur[ií]dica\s+\d+\s*)/i, '')
+                      .replace(/^.*?(?:Impuestos\s+de\s+[^\d]+\d+\s*)/i, '')
+                      .replace(/^.*?\b\d{8,10}\s*\d?\s*/i, '')
+                      .replace(/^.*?(?:35\.\s*Raz[oó]n\s*social\s*)/i, '')
+                      .trim();
+                    const cleaned = cleanExtracted(rawRs);
+                    if (cleaned && cleaned.length >= 3) rutResult.razon_social = cleaned;
                   }
+
+                  if (!rutResult.razon_social) {
+                    const rsMatch = fullText.match(/(?:Persona\s+jur[ií]dica\s+\d+\s+)?([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,60}\s+(?:S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|E\.?U\.?|INC\.?|CORP\.?))/i);
+                    if (rsMatch) {
+                      const rawRs = rsMatch[0]
+                        .replace(/^.*?(?:Persona\s+jur[ií]dica\s+\d+\s*)/i, '')
+                        .replace(/^.*?(?:Impuestos\s+de\s+[^\d]+\d+\s*)/i, '')
+                        .trim();
+                      const cleaned = cleanExtracted(rawRs);
+                      if (cleaned && cleaned.length >= 3) rutResult.razon_social = cleaned;
+                    }
+                  }
+
+                  // 2. NIT (Casilla 5)
+                  const nitPatterns = [
+                    /\b([89]\d{8})\b/,
+                    /5\.\s*N[IÍ]T[:\s]*(\d{8,10})/i,
+                    /NIT[:\s]*(\d{8,10})/i,
+                    /\b(\d{9,10})\b/
+                  ];
+                  for (const p of nitPatterns) {
+                    const m = fullText.match(p);
+                    if (m) {
+                      const candidate = m[1].replace(/[^\d]/g, '');
+                      if (candidate.length >= 8) { rutResult.nit = candidate; break; }
+                    }
+                  }
+
+                  // 3. Dirección (Casilla 41 / Vía Principal con Límite Estricto antes de Casilla 42)
+                  const dirPatterns = [
+                    /\b((?:DG|CL|CR|CRA|AV|TV|CALLE|CARRERA|DIAGONAL|TRANSVERSAL|AVENIDA|AUTOPISTA|AK|AC|KR)\.?\s+(?:[0-9]{1,4}[A-Z]?\s*(?:#|NRO\.?|NO\.?|-)?\s*){1,6}(?:BIS|SUR|ESTE|OESTE|NORTE|PISO\s*\d+|OF\.?\s*\d+|CONS\.?\s*\d+)?)/i,
+                    /\b((?:Calle|Carrera|Cr|Cl|Av\.|Avenida|Cra|Tv|Transversal|Diagonal|Dg|Autopista|AK|AC|KR)\s+[A-Z0-9\s#.\-]{3,50})/i,
+                    /\b(CR\s+\d+[\w\s#.\-]{3,40})/i,
+                    /\b(CL\s+\d+[\w\s#.\-]{3,40})/i,
+                    /\b(DG\s+\d+[\w\s#.\-]{3,40})/i,
+                    /\b(CRA?\s+\d+[\w\s#.\-]{3,40})/i,
+                    /\b(CALLE\s+\d+[\w\s#.\-]{3,40})/i,
+                    /\b(CARRERA\s+\d+[\w\s#.\-]{3,40})/i
+                  ];
+                  for (const p of dirPatterns) {
+                    const m = fullText.match(p);
+                    if (m && m[1]) {
+                      const cleaned = cleanExtracted(m[1].trim());
+                      if (cleaned && cleaned.length >= 5) { rutResult.direccion = cleaned; break; }
+                    }
+                  }
+
+
+
+                  // 4. Ciudad / Municipio (Casilla 40)
+                  const ciudadKnown = fullText.match(/\b(Bogot[aá](?:\s*D\.?\s*C\.?)?|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|C[uú]cuta|Ibagu[eé]|Neiva|Santa\s+Marta|Villavicencio|Rionegro|Envigado|Itag[uü][eé]|Ch[ií]a|Soacha|Palmira|Bello|Pasto|Monter[ií]a|Valledupar)\b/i);
+                  if (ciudadKnown) {
+                    rutResult.ciudad = ciudadKnown[1].trim();
+                  }
+
+                  // 5. Email (Casilla 42)
+                  const emailM = fullText.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+                  if (emailM) rutResult.email = emailM[1].toLowerCase();
+
+                  // 6. Teléfono (Casilla 44/45)
+                  const telM = fullText.match(/\b(3[0-9]{9})\b/) || fullText.match(/\b([2-8]\d{6,9})\b/);
+                  if (telM) rutResult.telefono = telM[1];
+
+                  if (rutResult.razon_social && rutResult.nit) {
+                    usedPdfParse = true;
+                  }
+                }
+              } catch (pdfErr: any) {
+                console.error('[RUT Backend] ❌ Error en pdf-parse:', pdfErr.message);
+              }
+
+              const hasEnoughText = fullText.length >= 50;
+              console.log(`[RUT Backend] 🔍 Using pdf-parse completado: ${usedPdfParse}`);
+              console.log(`[RUT Backend] 🔍 Texto suficiente para IA (>= 50 chars): ${hasEnoughText}`);
+              console.log('[RUT Backend] 📊 Datos extraídos por pdf-parse:', JSON.stringify(rutResult));
+
+              // ── PASO 2: Enriquecimiento con OpenRouter API (SOLO SI TIENE TEXTO SUFICIENTE) ──
+              let openRouterError: string | null = null;
+
+              if (!hasEnoughText) {
+                console.log('[RUT Backend] 🛑 El PDF no contiene texto digital seleccionable suficiente. Se omite llamada a OpenRouter.');
+              } else if ((!rutResult.razon_social || !rutResult.nit) && openRouterKey) {
+                usedOpenRouterFallback = true;
+                console.log(`[RUT Backend] 🤖 Using OpenRouter fallback: ${usedOpenRouterFallback}`);
+
+                const modelToUse = 'openrouter/free';
+                console.log(`[RUT Backend] 🤖 Modelo OpenRouter: ${modelToUse}`);
+                
+                try {
+                  const promptInstructions = `
+Eres un sistema experto en extracción de datos del RUT (Registro Único Tributario) de la DIAN Colombia.
+Analiza el siguiente texto de RUT DIAN y responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
+
+{
+  "razon_social": "Nombre de la empresa o nombre completo de la persona natural (casillas 31-34 o 35)",
+  "nombre_comercial": "Nombre comercial (casilla 36) o vacío",
+  "nit": "Número de NIT sin DV",
+  "ciudad": "Ciudad o municipio principal",
+  "direccion": "Dirección física",
+  "email": "Correo electrónico",
+  "telefono": "Número telefónico"
+}
+
+REGLAS:
+- Si es persona natural, combina casillas 31, 32, 33, 34 (Nombres y Apellidos).
+- NO devuelvas números de casilla ni texto legal.
+- Si no encuentras un campo, pon "".
+
+TEXTO DEL RUT:
+${fullText.substring(0, 4000)}
+`;
+
+                  const openRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${openRouterKey}`,
+                      'Content-Type': 'application/json',
+                      'HTTP-Referer': 'http://localhost:3000',
+                      'X-Title': 'Ioncore CRM'
+                    },
+                    body: JSON.stringify({
+                      model: modelToUse,
+                      messages: [{ role: 'user', content: promptInstructions }]
+                    })
+                  });
+
+                  console.log(`[RUT Backend] 📡 OpenRouter HTTP Status: ${openRes.status} ${openRes.statusText}`);
+                  console.log(`[RUT Backend] 📋 OpenRouter Content-Type: ${openRes.headers.get('content-type')}`);
+                  
+                  const rawText = await openRes.text();
+                  console.log(`[RUT Backend] 📄 OpenRouter RAW Body (primeros 500 chars): ${rawText.substring(0, 500)}`);
+
+                  if (!rawText || !rawText.trim()) {
+                    openRouterError = `OpenRouter devolvió una respuesta vacía (0 bytes) con status HTTP ${openRes.status}`;
+                    console.error('[RUT Backend] ❌ ' + openRouterError);
+                  } else {
+                    let openJson: any = null;
+                    try {
+                      openJson = JSON.parse(rawText.trim());
+                    } catch (eParse: any) {
+                      openRouterError = `Respuesta no-JSON de OpenRouter (HTTP ${openRes.status}): ${rawText.substring(0, 200)}`;
+                      console.error('[RUT Backend] ❌ Error parseando respuesta de OpenRouter:', eParse.message);
+                    }
+
+                    if (openRes.ok && openJson) {
+                      const txt = openJson.choices?.[0]?.message?.content || '';
+                      console.log('[RUT Backend] 🤖 Contenido del mensaje de OpenRouter:', txt.substring(0, 300));
+                      const jsonMatch = txt.match(/\{[\s\S]*\}/)?.[0];
+                      if (jsonMatch) {
+                        try {
+                          const parsed = JSON.parse(jsonMatch);
+                          if (parsed && typeof parsed === 'object') {
+                            if (parsed.razon_social && !rutResult.razon_social) rutResult.razon_social = parsed.razon_social;
+                            if (parsed.nit && !rutResult.nit) rutResult.nit = parsed.nit;
+                            if (parsed.ciudad && !rutResult.ciudad) rutResult.ciudad = parsed.ciudad;
+                            if (parsed.direccion && !rutResult.direccion) rutResult.direccion = parsed.direccion;
+                            if (parsed.email && !rutResult.email) rutResult.email = parsed.email;
+                            if (parsed.telefono && !rutResult.telefono) rutResult.telefono = parsed.telefono;
+                          }
+                        } catch (eContentJson: any) {
+                          console.warn('[RUT Backend] ⚠️ El contenido devuelto por la IA no es un JSON válido:', eContentJson.message);
+                        }
+                      }
+                    } else if (openJson) {
+                      openRouterError = openJson?.error?.message || `HTTP ${openRes.status} desde OpenRouter`;
+                      console.error('[RUT Backend] ❌ Error de OpenRouter:', JSON.stringify(openJson.error));
+                    }
+                  }
+                } catch (orErr: any) {
+                  openRouterError = `Excepción en la llamada a OpenRouter: ${orErr.message}`;
+                  console.error('[RUT Backend] ❌ Excepción llamando OpenRouter:', orErr.message);
                 }
               }
 
-              // Extracción local de patrones con descompresión zlib como respaldo
-              if (!rutResult.razon_social && !rutResult.nit) {
-                try {
-                  const buf = Buffer.from(base64Data, 'base64');
-                  let rawText = buf.toString('utf-8') + '\n' + buf.toString('binary');
 
-                  // Decompress PDF FlateDecode streams
-                  const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
-                  let match: RegExpExecArray | null;
-                  while ((match = streamRegex.exec(buf.toString('binary'))) !== null) {
-                    try {
-                      const streamBytes = Buffer.from(match[1], 'binary');
-                      let decompressed: Buffer;
-                      try {
-                        decompressed = zlib.inflateSync(streamBytes);
-                      } catch {
-                        decompressed = zlib.inflateRawSync(streamBytes);
-                      }
-                      rawText += '\n' + decompressed.toString('utf-8') + '\n' + decompressed.toString('binary');
-                    } catch (e) {}
-                  }
 
-                  // Extraer bloques de texto entre paréntesis y bloques hexadecimales <HEX>
-                  const textBlocks: string[] = [];
-                  const pRegex = /\(([^()]{2,120})\)/g;
-                  let pm: RegExpExecArray | null;
-                  while ((pm = pRegex.exec(rawText)) !== null) {
-                    const t = pm[1].trim();
-                    if (t && !t.includes('00000 65536') && !t.startsWith('/') && !/^\d{10}\s+\d{5}/.test(t)) {
-                      textBlocks.push(t);
-                    }
-                  }
 
-                  // De-hex PDF hex text strings <HEX...>
-                  const hexRegex = /<([0-9A-Fa-f]{6,500})>/g;
-                  let hMatch: RegExpExecArray | null;
-                  while ((hMatch = hexRegex.exec(rawText)) !== null) {
-                    try {
-                      const hexStr = hMatch[1];
-                      const decoded = Buffer.from(hexStr, 'hex').toString('utf-8');
-                      if (decoded && /[A-Z0-9]{3,}/i.test(decoded) && !decoded.includes('00000 65536')) {
-                        textBlocks.push(decoded);
-                      }
-                    } catch (e) {}
-                  }
 
-                  const cleanText = textBlocks.join(' ') + '\n' + rawText.replace(/[\(\)<>\[\]\/]/g, ' ');
 
-                  // Helper sanitizador para descartar basura de metadatos PDF (ej. xref tables)
-                  const isRealText = (val?: string): boolean => {
-                    if (!val) return false;
-                    const v = val.trim();
-                    if (v.includes('00000') || v.includes('65536') || v.includes('xref') || v.includes('endobj') || v.includes('trailer') || v.includes('stream')) return false;
-                    if (/^\d{8,15}\s+00000/.test(v)) return false;
-                    return v.length >= 3;
-                  };
 
-                  // 1. NIT (Casilla 5)
-                  const nitMatch = cleanText.match(/\b5\s+(\d{8,11})\b/i) ||
-                                   cleanText.match(/(?:NIT|Casilla\s*5|Identificaci[oó]n)[:\s]*([\d.\-]{8,15})/i) ||
-                                   cleanText.match(/\b(\d{9,10}-\d|\d{3}\.\d{3}\.\d{3}-\d|\d{9})\b/);
-                  if (nitMatch) {
-                    const candidateNit = nitMatch[1].replace(/[^\d\-]/g, '');
-                    if (isRealText(candidateNit)) rutResult.nit = candidateNit;
-                  }
-
-                  // 2. Razón Social (Casilla 35)
-                  const razonMatch = cleanText.match(/\b35\s+([A-Z0-9\s.\-&]{3,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?|INC|CORP))\b/i) ||
-                                     cleanText.match(/(?:Razon\s*Social|Razón\s*Social|Casilla\s*35)[:\s]*([^\r\n]{3,60})/i) ||
-                                     cleanText.match(/([A-Z0-9\s.\-&]{4,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?))/i);
-                  if (razonMatch) {
-                    const candidateRazon = razonMatch[1].trim();
-                    if (isRealText(candidateRazon)) rutResult.razon_social = candidateRazon;
-                  }
-
-                  // 3. Dirección (Casilla 41)
-                  const dirMatch = cleanText.match(/\b41\s+((?:Calle|Carrera|Cra|Cl|Av|Avenida|Transversal|Tv|Diagonal|Dg|Autopista|Kmr|Km)[^\r\n]{5,50})/i) ||
-                                   cleanText.match(/(?:Direcci[oó]n|Casilla\s*41)[:\s]*([^\r\n]{5,60})/i);
-                  if (dirMatch) {
-                    const candidateDir = (dirMatch[1] || dirMatch[0]).replace(/^41\s+/, '').trim();
-                    if (isRealText(candidateDir)) rutResult.direccion = candidateDir;
-                  }
-
-                  // 4. Ciudad (Casilla 40)
-                  const ciudadMatch = cleanText.match(/\b40\s+([A-Z\s]{3,25})\b/i) ||
-                                      cleanText.match(/\b(Bogot[aá]|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|Cúcuta|Ibagué|Neiva|Santa Marta|Villavicencio|Rionegro|Envigado|Itagüí|Chía|Soacha)\b/i);
-                  if (ciudadMatch) {
-                    const candidateCiudad = ciudadMatch[1] || ciudadMatch[0];
-                    if (isRealText(candidateCiudad)) rutResult.ciudad = candidateCiudad;
-                  }
-                } catch (e) {}
+              function cleanValue(value: any) {
+                if (!value || typeof value !== 'string') return null;
+                const invalid = ['primer apellido','segundo apellido','otros nombres','sin perjuicio','tipo','31.','32.','33.','34.'];
+                const v = value.toLowerCase();
+                if (invalid.some(i => v.includes(i))) return null;
+                if (value.trim().length < 3) return null;
+                return value.trim();
               }
 
-              // Retornar respuesta exitosa (HTTP 200) siempre para no bloquear la interfaz
+              const filteredData: Record<string, string | null> = {
+                razon_social: cleanValue(rutResult.razon_social),
+                nombre_comercial: cleanValue(rutResult.nombre_comercial) || null,
+                nit: rutResult.nit ? String(rutResult.nit).replace(/[^\d\-]/g, '') || null : null,
+                direccion: cleanValue(rutResult.direccion),
+                ciudad: cleanValue(rutResult.ciudad),
+                email: rutResult.email || null,
+                telefono: rutResult.telefono || null,
+              };
+
+              // Retornar error HTTP si OpenRouter falló o respuesta exitosa (200) si se extrajeron datos
+              const isDataEmpty = !filteredData.razon_social && !filteredData.nit && !filteredData.email && !filteredData.ciudad;
+              
+              if (isDataEmpty && openRouterError) {
+                console.error('[RUT Backend] ❌ Error en OpenRouter:', openRouterError);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  success: false,
+                  error: `OpenRouter API Error: ${openRouterError}`
+                }));
+                return;
+              }
+
+              console.log('[RUT Backend] 📤 Respuesta enviada al cliente (200 OK):', { success: true, data: filteredData });
+
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 success: true,
-                data: rutResult,
-                warning: (!rutResult.razon_social && !rutResult.nit)
-                  ? 'No se pudieron extraer los datos automáticamente. Por favor diligencie los campos manualmente.'
-                  : undefined
+                data: filteredData,
+                warning: isDataEmpty ? 'No se encontraron campos legibles en el PDF subido. Por favor ingresa los datos manualmente.' : undefined
               }));
               return;
+
+
             } catch (err: any) {
               console.error('[Extract RUT Error]', err.message);
               res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -859,7 +1028,8 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || env.API_KEY || ''),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || env.API_KEY || ''),
-      'process.env.VITE_GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || env.API_KEY || '')
+      'process.env.VITE_GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || env.API_KEY || ''),
+      'process.env.OPENROUTER_API_KEY': JSON.stringify(env.OPENROUTER_API_KEY || env.VITE_OPENROUTER_API_KEY || '')
     },
     resolve: {
       alias: {
