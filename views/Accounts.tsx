@@ -471,12 +471,14 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
 
           if (data.razon_social) {
             setRazonSocial(data.razon_social);
-            setNombreComercial(data.nombre_comercial || data.razon_social);
           }
+          // Nombre Comercial y Sede son opcionales: NO duplicar ni forzar
+          setNombreComercial(data.nombre_comercial || "");
+          setSede("");
+
           if (data.nit) setNit(data.nit);
-          setCiudad(data.ciudad || "Bogotá D.C.");
-          setDireccion(data.direccion || "Dirección registrada en RUT");
-          setSede("Sede Principal");
+          if (data.ciudad) setCiudad(data.ciudad);
+          if (data.direccion) setDireccion(data.direccion);
 
           // Auto-seleccionar Sector según Razón Social
           const upperRs = (data.razon_social || "").toUpperCase();

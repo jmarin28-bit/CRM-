@@ -725,16 +725,12 @@ function googleOAuthPlugin() {
 
               const openRouterKey = process.env.OPENROUTER_API_KEY || '';
               console.log('[RUT Backend] 📥 Solicitud recibida. Base64 length:', base64Data ? base64Data.length : 0);
-              console.log('[RUT Backend] 🔑 OPENROUTER_API_KEY disponible:', openRouterKey ? `SÍ (${openRouterKey.substring(0, 10)}...)` : 'NO');
 
               let rutResult: any = {};
               let pdfPages = 0;
               let fullText = '';
               let usedPdfParse = false;
-              let usedOpenRouterFallback = false;
 
-
-              // ── PASO 1: Extracción local con pdf-parse (PRIMARIO) ──
               try {
                 const pdfParse = requireCJS('pdf-parse');
                 const buf = Buffer.from(base64Data, 'base64');
@@ -746,54 +742,56 @@ function googleOAuthPlugin() {
                 }
                 pdfPages = pdfData.numpages || 1;
                 fullText = (pdfData.text || '').replace(/\s+/g, ' ').trim();
-                
-                console.log(`[RUT Backend] 📊 PDF pages: ${pdfPages}`);
-                console.log(`[RUT Backend] 📝 Extracted text length: ${fullText.length}`);
 
                 if (fullText.length >= 50) {
                   const cleanExtracted = (value: string) => {
                     if (!value) return null;
-                    const invalid = ['primer apellido','segundo apellido','otros nombres','sin perjuicio','tipo','casilla','exportadoresusuarios'];
-                    const v = value.toLowerCase();
+                    let cleaned = value.trim();
+                    if (cleaned.length < 3) return null;
+
+                    // Remover prefijos de encabezado DIAN si quedaron pegados
+                    cleaned = cleaned.replace(/^.*?(?:Persona\s+jur[ií]dica\s+\d+\s*)/i, "")
+                                     .replace(/^.*?(?:35\.\s*Raz[oó]n\s*social\s*)/i, "")
+                                     .replace(/^.*?(?:Impuestos\s+de\s+[^\d]+\d+\s*)/i, "")
+                                     .trim();
+
+                    const invalid = ['primer apellido','segundo apellido','otros nombres','sin perjuicio','tipo','casilla','exportadoresusuarios','firma autorizada','responsabilidades','establecimientos','parágrafo','decreto'];
+                    const v = cleaned.toLowerCase();
                     if (invalid.some(i => v.includes(i))) return null;
 
-                    let cleaned = value;
-                    // Cortar si encuentra encabezados de tabla siguientes (36, 37, 38, UBICACION, 42 Correo o email con @)
+                    // Cortar si encuentra encabezados de tabla siguientes (36., 37., 38., UBICACION, 42. Correo)
                     cleaned = cleaned.split(/\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|42\.|42\s*Correo|Correo|email|[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i)[0];
 
                     return cleaned.replace(/\s{2,}/g, ' ').trim();
                   };
 
-                  // 1. Razón Social (Patrón universal DIAN: Casilla 35 antecede a COLOMBIA 169)
-                  const matchColombia = fullText.match(/([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,80}?)\s+\bCOLOMBIA\b\s+(?:1\s*6\s*9|169)/i);
-
-                  if (matchColombia) {
-                    const rawRs = matchColombia[1]
-                      .replace(/^.*?(?:Persona\s+jur[ií]dica\s+\d+\s*)/i, '')
-                      .replace(/^.*?(?:Impuestos\s+de\s+[^\d]+\d+\s*)/i, '')
-                      .replace(/^.*?\b\d{8,10}\s*\d?\s*/i, '')
-                      .replace(/^.*?(?:35\.\s*Raz[oó]n\s*social\s*)/i, '')
-                      .trim();
-                    const cleaned = cleanExtracted(rawRs);
-                    if (cleaned && cleaned.length >= 3) rutResult.razon_social = cleaned;
+                  // 1. Razón Social (Casilla 35 explícita sin arrastrar 36/37/38)
+                  const matchCasilla35 = fullText.match(/(?:35\.\s*(?:Raz[oó]n\s*social)?[:\s]*)([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,80}?)(?=\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|COLOMBIA|41\.))/i);
+                  if (matchCasilla35) {
+                    const cleaned = cleanExtracted(matchCasilla35[1]);
+                    if (cleaned) rutResult.razon_social = cleaned;
                   }
 
                   if (!rutResult.razon_social) {
-                    const rsMatch = fullText.match(/(?:Persona\s+jur[ií]dica\s+\d+\s+)?([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,60}\s+(?:S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|E\.?U\.?|INC\.?|CORP\.?))/i);
+                    const rsMatch = fullText.match(/([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,70}\s+(?:S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|E\.?U\.?|INC\.?|CORP\.?))/i);
                     if (rsMatch) {
-                      const rawRs = rsMatch[0]
-                        .replace(/^.*?(?:Persona\s+jur[ií]dica\s+\d+\s*)/i, '')
-                        .replace(/^.*?(?:Impuestos\s+de\s+[^\d]+\d+\s*)/i, '')
-                        .trim();
-                      const cleaned = cleanExtracted(rawRs);
-                      if (cleaned && cleaned.length >= 3) rutResult.razon_social = cleaned;
+                      const cleaned = cleanExtracted(rsMatch[1]);
+                      if (cleaned) rutResult.razon_social = cleaned;
+                    }
+                  }
+
+                  if (!rutResult.razon_social) {
+                    const matchColombia = fullText.match(/([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,80}?)\s+\bCOLOMBIA\b\s+(?:1\s*6\s*9|169)/i);
+                    if (matchColombia) {
+                      const cleaned = cleanExtracted(matchColombia[1]);
+                      if (cleaned) rutResult.razon_social = cleaned;
                     }
                   }
 
                   // 2. NIT (Casilla 5)
                   const nitPatterns = [
-                    /\b([89]\d{8})\b/,
                     /5\.\s*N[IÍ]T[:\s]*(\d{8,10})/i,
+                    /\b([89]\d{8})\b/,
                     /NIT[:\s]*(\d{8,10})/i,
                     /\b(\d{9,10})\b/
                   ];
@@ -801,16 +799,51 @@ function googleOAuthPlugin() {
                     const m = fullText.match(p);
                     if (m) {
                       const candidate = m[1].replace(/[^\d]/g, '');
-                      if (candidate.length >= 8) { rutResult.nit = candidate; break; }
+                      if (candidate.length >= 8) { rutResult.nit = candidate.substring(0, 9); break; }
                     }
                   }
 
-                  // 3. Dirección (Casilla 41 / Vía Principal con Límite Estricto antes de Casilla 42)
-                  const dirPatterns = [
-                    /\b((?:DG|CL|CR|CRA|AV|TV|CALLE|CARRERA|DIAGONAL|TRANSVERSAL|AVENIDA|AUTOPISTA|AK|AC|KR)\.?\s+(?:[0-9]{1,4}[A-Z]?\s*(?:#|NRO\.?|NO\.?|-)?\s*){1,6}(?:BIS|SUR|ESTE|OESTE|NORTE|PISO\s*\d+|OF\.?\s*\d+|CONS\.?\s*\d+)?)/i,
-                    /\b((?:Calle|Carrera|Cr|Cl|Av\.|Avenida|Cra|Tv|Transversal|Diagonal|Dg|Autopista|AK|AC|KR)\s+[A-Z0-9\s#.\-]{3,50})/i,
-                    /\b(CR\s+\d+[\w\s#.\-]{3,40})/i,
-                    /\b(CL\s+\d+[\w\s#.\-]{3,40})/i,
+                  // 3. Dirección (Casilla 41 - Captura completa p. ej. "CR 81 B 51 52")
+                  const cas41Match = fullText.match(/(?:41\.\s*(?:Direcci[oó]n\s*principal|Direcci[oó]n)?[:\s]*)([A-Z0-9ÁÉÍÓÚÑ\s#.\-/#]{5,60}?)(?=\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N))/i);
+                  if (cas41Match) {
+                    const cleaned = cleanExtracted(cas41Match[1]);
+                    if (cleaned) rutResult.direccion = cleaned;
+                  }
+
+                  if (!rutResult.direccion) {
+                    const dirPatterns = [
+                      /\b((?:DG|CL|CR|CRA|AV|TV|CALLE|CARRERA|DIAGONAL|TRANSVERSAL|AVENIDA|AUTOPISTA|AK|AC|KR)\.?\s+[A-Z0-9\s#.\-/]{5,50})/i
+                    ];
+                    for (const p of dirPatterns) {
+                      const m = fullText.match(p);
+                      if (m && m[1]) {
+                        const cleaned = cleanExtracted(m[1].trim());
+                        if (cleaned && cleaned.length >= 5) { rutResult.direccion = cleaned; break; }
+                      }
+                    }
+                  }
+
+                  // 4. Ciudad / Municipio (Casilla 40)
+                  const cas40Match = fullText.match(/(?:40\.\s*(?:Ciudad\s*\/\s*Municipio|Ciudad|Municipio)?[:\s]*)([A-ZÁÉÍÓÚÑ\s]{3,30}?)(?=\s+(?:41\.|41\s|Direcci[oó]n))/i);
+                  if (cas40Match) {
+                    const cleaned = cleanExtracted(cas40Match[1].replace(/^[0-9\s]+/, ""));
+                    if (cleaned) rutResult.ciudad = cleaned;
+                  }
+
+                  if (!rutResult.ciudad) {
+                    const ciudadKnown = fullText.match(/\b(Bogot[aá](?:\s*D\.?\s*C\.?)?|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|C[uú]cuta|Ibagu[eé]|Neiva|Santa\s+Marta|Villavicencio|Rionegro|Envigado|Itag[uü][eé]|Ch[ií]a|Soacha|Palmira|Bello|Pasto|Monter[ií]a|Valledupar|Floridablanca|Girardota|Sabaneta)\b/i);
+                    if (ciudadKnown) {
+                      rutResult.ciudad = ciudadKnown[1].trim();
+                    }
+                  }
+
+                  // 5. Email (Casilla 42)
+                  const emailM = fullText.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+                  if (emailM) rutResult.email = emailM[1].toLowerCase();
+
+                  // 6. Teléfono (Casilla 44/45)
+                  const telM = fullText.match(/\b(3[0-9]{9})\b/) || fullText.match(/\b([2-8]\d{6,9})\b/);
+                  if (telM) rutResult.telefono = telM[1];(CL\s+\d+[\w\s#.\-]{3,40})/i,
                     /\b(DG\s+\d+[\w\s#.\-]{3,40})/i,
                     /\b(CRA?\s+\d+[\w\s#.\-]{3,40})/i,
                     /\b(CALLE\s+\d+[\w\s#.\-]{3,40})/i,
