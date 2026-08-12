@@ -759,14 +759,14 @@ function googleOAuthPlugin() {
                     const v = cleaned.toLowerCase();
                     if (invalid.some(i => v.includes(i))) return null;
 
-                    // Cortar si encuentra encabezados de tabla siguientes (36., 37., 38., UBICACION, 42. Correo)
-                    cleaned = cleaned.split(/\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|42\.|42\s*Correo|Correo|email|[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i)[0];
+                    // Cortar si encuentra encabezados de tabla siguientes (36., 37., 38., UBICACION, COLOMBIA, 169, 42. Correo)
+                    cleaned = cleaned.split(/\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|COLOMBIA|169|42\.|42\s*Correo|Correo|email|[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i)[0];
 
                     return cleaned.replace(/\s{2,}/g, ' ').trim();
                   };
 
-                  // 1. Razón Social (Casilla 35 explícita sin arrastrar 36/37/38)
-                  const matchCasilla35 = fullText.match(/(?:35\.\s*(?:Raz[oó]n\s*social)?[:\s]*)([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,80}?)(?=\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|COLOMBIA|41\.))/i);
+                  // 1. Razón Social (Casilla 35 explícita sin arrastrar 36/37/38/COLOMBIA)
+                  const matchCasilla35 = fullText.match(/(?:35\.\s*(?:Raz[oó]n\s*social)?[:\s]*)([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,100}?)(?=\s+(?:36\.|37\.|38\.|UBICACI[OÓ]N|COLOMBIA|169|41\.))/i);
                   if (matchCasilla35) {
                     const cleaned = cleanExtracted(matchCasilla35[1]);
                     if (cleaned) rutResult.razon_social = cleaned;
@@ -788,12 +788,11 @@ function googleOAuthPlugin() {
                     }
                   }
 
-                  // 2. NIT (Casilla 5)
+                  // 2. NIT (Casilla 5 - Extrae exactamente los 9 dígitos base del NIT)
                   const nitPatterns = [
-                    /5\.\s*N[IÍ]T[:\s]*(\d{8,10})/i,
-                    /\b([89]\d{8})\b/,
-                    /NIT[:\s]*(\d{8,10})/i,
-                    /\b(\d{9,10})\b/
+                    /5\.\s*(?:N[IÍ]T|N[uú]mero\s+de\s+Identificaci[oó]n\s+Tributaria)?[:\s]*([0-9\s]{9,20})/i,
+                    /N[IÍ]T[:\s]*([0-9\s]{9,20})/i,
+                    /\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/
                   ];
                   for (const p of nitPatterns) {
                     const m = fullText.match(p);
@@ -803,8 +802,8 @@ function googleOAuthPlugin() {
                     }
                   }
 
-                  // 3. Dirección (Casilla 41 - Captura completa p. ej. "CR 81 B 51 52")
-                  const cas41Match = fullText.match(/(?:41\.\s*(?:Direcci[oó]n\s*principal|Direcci[oó]n)?[:\s]*)([A-Z0-9ÁÉÍÓÚÑ\s#.\-/#]{5,60}?)(?=\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N))/i);
+                  // 3. Dirección (Casilla 41 - Captura completa p. ej. "CL 33 CR 74 B 146" o "CR 81 B 51 52")
+                  const cas41Match = fullText.match(/(?:41\.\s*(?:Direcci[oó]n\s*principal|Direcci[oó]n)?[:\s]*)([A-Z0-9ÁÉÍÓÚÑ\s#.\-/#]{5,80}?)(?=\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N))/i);
                   if (cas41Match) {
                     const cleaned = cleanExtracted(cas41Match[1]);
                     if (cleaned) rutResult.direccion = cleaned;
