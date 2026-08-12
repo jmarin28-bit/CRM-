@@ -707,47 +707,82 @@ export default function CommercialGuidePanel() {
       const overdue = briefing.overdueFollowUps || [];
       const today = briefing.todayFollowUps || [];
       const quotes = briefing.pendingQuotes || [];
-      const tasks = [...(briefing.todayTasks || []), ...(briefing.memoryAlerts || [])];
+      const tasks = briefing.todayTasks || [];
+      const memory = briefing.memoryAlerts || [];
 
-      let itemIndex = 1;
+      // Separar visitas de hoy de otros seguimientos de hoy
+      const todayVisits = today.filter(
+        (i) =>
+          i.detail.toLowerCase().includes("visita") ||
+          i.title.toLowerCase().includes("visita")
+      );
+      const todayFollowUpsOnly = today.filter(
+        (i) =>
+          !i.detail.toLowerCase().includes("visita") &&
+          !i.title.toLowerCase().includes("visita")
+      );
 
-      if (overdue.length > 0) {
-        parts.push("Vencidos:");
-        overdue.forEach((item) => {
-          parts.push(`${itemIndex++}. [Vencido] ${item.title} — ${item.detail}`);
-        });
-        parts.push("");
-      }
+      let hasItems = false;
+      let globalIdx = 1;
 
-      if (today.length > 0) {
-        parts.push("Seguimientos para hoy:");
-        today.forEach((item) => {
-          parts.push(`${itemIndex++}. [Hoy] ${item.title} — ${item.detail}`);
-        });
-        parts.push("");
-      }
-
+      // 1. Cotizaciones pendientes / sin OC
       if (quotes.length > 0) {
+        hasItems = true;
         parts.push("Cotizaciones pendientes / sin OC:");
         quotes.forEach((item) => {
-          parts.push(`${itemIndex++}. [Cotización] ${item.detail}`);
+          parts.push(`${globalIdx++}. ${item.detail}`);
         });
         parts.push("");
       }
 
-      if (tasks.length > 0) {
+      // 2. Tareas y recordatorios
+      if (tasks.length > 0 || memory.length > 0) {
+        hasItems = true;
         parts.push("Tareas y recordatorios:");
         tasks.forEach((t) => {
-          parts.push(`${itemIndex++}. [Tarea] ${t.title || t.detail}`);
+          parts.push(`${globalIdx++}. [Tarea] ${t.title || t.detail}`);
+        });
+        memory.forEach((m) => {
+          parts.push(`${globalIdx++}. [Memoria] ${m.title || m.detail}`);
         });
         parts.push("");
       }
 
-      if (itemIndex === 1) {
-        return "No tienes seguimientos, cotizaciones ni tareas pendientes para hoy.";
+      // 3. Seguimientos programados para hoy
+      if (todayFollowUpsOnly.length > 0) {
+        hasItems = true;
+        parts.push("Seguimientos programados para hoy:");
+        todayFollowUpsOnly.forEach((item) => {
+          parts.push(`${globalIdx++}. ${item.detail || item.title}`);
+        });
+        parts.push("");
       }
 
-      return parts.join("\n");
+      // 4. Visitas de hoy
+      if (todayVisits.length > 0) {
+        hasItems = true;
+        parts.push("Visitas de hoy:");
+        todayVisits.forEach((item) => {
+          parts.push(`${globalIdx++}. ${item.detail || item.title}`);
+        });
+        parts.push("");
+      }
+
+      // 5. Actividades vencidas pendientes
+      if (overdue.length > 0) {
+        hasItems = true;
+        parts.push("Actividades vencidas pendientes:");
+        overdue.forEach((item) => {
+          parts.push(`${globalIdx++}. ${item.detail || item.title}`);
+        });
+        parts.push("");
+      }
+
+      if (!hasItems) {
+        return "No tienes elementos pendientes para hoy.";
+      }
+
+      return parts.join("\n").trim();
     }
 
     if (isBriefingIntent) {
