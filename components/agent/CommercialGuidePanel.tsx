@@ -1332,7 +1332,7 @@ export default function CommercialGuidePanel() {
     if (!confirmed) return;
 
     updateActivityLocally(activityId, {
-      status: "realizado",
+      status: "completada",
       completedAt: new Date().toISOString(),
     });
 

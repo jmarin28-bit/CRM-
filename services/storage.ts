@@ -1309,12 +1309,25 @@ export function deleteActivity(activityId: string) {
   writeJSON(ACTIVITIES_KEY, updated);
 }
 
+export function isActivityDone(activity: any): boolean {
+  if (!activity) return false;
+  const s = (activity.status || "").toLowerCase().trim();
+  return (
+    s === "completada" ||
+    s === "completado" ||
+    s === "realizado" ||
+    s === "realizada" ||
+    s === "cancelada" ||
+    s === "cancelado"
+  );
+}
+
 export function clearAllPendingFollowUps(userId: string) {
   const activities = readJSON<ActivityV2[]>(ACTIVITIES_KEY, []);
   const toDeleteIds = new Set<string>();
 
   activities.forEach(a => {
-    const isPendingFollowUp = a.ownerId === userId && a.followUpAt && a.status !== "completada" && a.status !== "realizado";
+    const isPendingFollowUp = a.ownerId === userId && a.followUpAt && !isActivityDone(a);
     if (isPendingFollowUp) {
       toDeleteIds.add(a.id);
       const historyAct = activities.find(h => h.followUpActivityId === a.id);
@@ -1324,7 +1337,7 @@ export function clearAllPendingFollowUps(userId: string) {
     }
     if (a.followUpActivityId) {
       const pendingFollowUp = activities.find(p => p.id === a.followUpActivityId);
-      if (pendingFollowUp && pendingFollowUp.ownerId === userId && pendingFollowUp.followUpAt && pendingFollowUp.status !== "completada" && pendingFollowUp.status !== "realizado") {
+      if (pendingFollowUp && pendingFollowUp.ownerId === userId && pendingFollowUp.followUpAt && !isActivityDone(pendingFollowUp)) {
         toDeleteIds.add(a.id);
         toDeleteIds.add(pendingFollowUp.id);
       }
@@ -1341,7 +1354,7 @@ export function listUpcomingActivities(): ActivityV2[] {
   const now = new Date();
 
   return all
-    .filter((a: any) => a.followUpAt && a.status !== "realizado")
+    .filter((a: any) => a.followUpAt && !isActivityDone(a))
     .filter((a) => new Date(a.followUpAt!) > now)
     .sort((a, b) => new Date(a.followUpAt!).getTime() - new Date(b.followUpAt!).getTime());
 }
@@ -1353,7 +1366,7 @@ export function listOverdueActivities(): ActivityV2[] {
   startOfToday.setHours(0, 0, 0, 0);
 
   return all
-    .filter((a: any) => a.followUpAt && a.status !== "realizado")
+    .filter((a: any) => a.followUpAt && !isActivityDone(a))
     .filter((a) => new Date(a.followUpAt!) < startOfToday)
     .sort((a, b) => new Date(b.followUpAt!).getTime() - new Date(a.followUpAt!).getTime());
 }

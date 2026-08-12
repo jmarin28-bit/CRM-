@@ -240,7 +240,7 @@ export type ActivityType = "Llamada" | "Reunión" | "Videollamada" | "Visita" | 
  * equivalentes en los filtros (Dashboard, Axis, storage); no unificarlas acá
  * para no romper datos ya guardados en localStorage.
  */
-export type ActivityStatus = "pendiente" | "completada" | "realizado" | "sent";
+export type ActivityStatus = "pendiente" | "completada" | "realizado" | "cancelada" | "sent" | string;
 
 export type ActivityV2 = {
   id: string;
@@ -252,6 +252,7 @@ export type ActivityV2 = {
   user: string; // nombre legible de quien registró
   createdAt: string;
   updatedAt?: string; // lo escribe updateActivity
+  completedAt?: string | null; // fecha en que se marcó como realizada/completada
   followUpAt?: string | null;
   status?: ActivityStatus;
   followUpActivityId?: string; // vínculo entre gestión y su seguimiento programado

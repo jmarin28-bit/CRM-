@@ -20,7 +20,8 @@ import {
   updateActivity,
   deleteActivity,
   clearAllPendingFollowUps,
-  getActiveUser
+  getActiveUser,
+  isActivityDone
 } from "../services/storage";
 
 // ==========================================
@@ -68,7 +69,14 @@ const formatAxisDateTime = (value?: string | null) => {
   });
 };
 
-const getFollowUpStatus = (value?: string | null) => {
+const getFollowUpStatus = (value?: string | null, status?: string) => {
+  if (status && isActivityDone({ status })) {
+    return {
+      label: "Completada",
+      className: "bg-emerald-100 text-emerald-700",
+    };
+  }
+
   if (!value) {
     return {
       label: "Sin fecha",
@@ -437,7 +445,7 @@ export default function Axis() {
   const pendingFollowUps = useMemo(() => {
     return listActivitiesByUser()
       .filter((activity: any) => activity.followUpAt)
-      .filter((activity: any) => activity.status !== "realizado" && activity.status !== "completada")
+      .filter((activity: any) => !isActivityDone(activity))
       .sort((a: any, b: any) => {
         return new Date(a.followUpAt).getTime() - new Date(b.followUpAt).getTime();
       })
@@ -1291,7 +1299,7 @@ export default function Axis() {
               {pendingFollowUps.map((activity: any) => {
                 const contact = axisContacts.find((c: any) => c.id === activity.contactId);
                 const account = axisAccounts.find((a: any) => a.id === activity.accountId);
-                const followUpStatus = getFollowUpStatus(activity.followUpAt);
+                const followUpStatus = getFollowUpStatus(activity.followUpAt, activity.status);
 
                 return (
                   <div
@@ -1361,9 +1369,10 @@ export default function Axis() {
                        <button
                         type="button"
                         onClick={() => handleCompleteFollowUp(activity.id)}
-                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 transition-colors"
+                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 transition-colors flex items-center gap-1"
                       >
-                        Marcar como hecho
+                        <CheckCircle2 size={13} />
+                        ✓ Marcar como realizada
                       </button>
                       <button
                         type="button"

@@ -196,9 +196,17 @@ function endOfDay(date: Date) {
   return d;
 }
 
-function isActivityDone(activity: ActivityV2) {
-  const anyActivity = activity as any;
-  return anyActivity.status === "realizado" || anyActivity.status === "Realizado";
+export function isActivityDone(activity: any): boolean {
+  if (!activity) return false;
+  const s = (activity.status || "").toLowerCase().trim();
+  return (
+    s === "completada" ||
+    s === "completado" ||
+    s === "realizado" ||
+    s === "realizada" ||
+    s === "cancelada" ||
+    s === "cancelado"
+  );
 }
 
 function getAccountName(account?: AccountV2) {
