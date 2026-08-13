@@ -393,19 +393,29 @@ export function parseRutPdfLocally(base64Data: string): {
     let telefono = "";
     let nombre_comercial = "";
 
-    // Extraer NIT (Casilla 5: 9 a 10 dígitos, a veces separados por espacios en el formulario DIAN)
+    // Extraer NIT (Casilla 5 y Casilla 6: Formato exacto NIT-DV: 900745087-2)
+    let nitBase = "";
     const nitSpacedMatch = fullRawText.match(/\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/);
     if (nitSpacedMatch) {
-      nit = nitSpacedMatch[1].replace(/\s+/g, "");
+      nitBase = nitSpacedMatch[1].replace(/\s+/g, "");
     } else {
       const nitDirect = fullRawText.match(/\b([89]\d{8,9})\b/);
-      if (nitDirect) nit = nitDirect[1];
+      if (nitDirect) nitBase = nitDirect[1];
     }
 
-    // DV (Casilla 6)
-    const dvMatch = fullRawText.match(/\b([89]\d{8,9})\s*(\d)\b/);
-    if (dvMatch && nit && dvMatch[2].length === 1 && !nit.includes("-")) {
-      nit = `${nit}-${dvMatch[2]}`;
+    if (nitBase) {
+      let dv = "";
+      const cas6Match = fullRawText.match(/(?:6\.\s*(?:DV|D[ií]gito\s*de\s*verificaci[oó]n)?[:\s]*)(\d)\b/i);
+      if (cas6Match) {
+        dv = cas6Match[1];
+      } else if (nitBase.length === 9) {
+        const weights = [41, 37, 29, 23, 19, 17, 13, 7, 3];
+        let sum = 0;
+        for (let i = 0; i < 9; i++) sum += parseInt(nitBase[i], 10) * weights[i];
+        const r = sum % 11;
+        dv = r === 0 ? "0" : r === 1 ? "1" : String(11 - r);
+      }
+      nit = dv ? `${nitBase}-${dv}` : nitBase;
     }
 
     // Extraer Razón Social (Casilla 35 - Empresa con S.A.S., LTDA, S.A., E.U., etc. o Persona Natural)
@@ -419,10 +429,31 @@ export function parseRutPdfLocally(base64Data: string): {
       }
     }
 
+    // Extraer Nombre Comercial (Casilla 36)
+    // Solo si existe un valor entre 36 y 37.
+    // La casilla 37 (Sigla) NO se utiliza.
+    const nombreComercialMatch = fullRawText.match(
+      /36\.\s*Nombre\s+comercial\s+(.{2,100}?)(?=\s+37\.)/i
+    );
+
+    if (nombreComercialMatch) {
+      const candidate = nombreComercialMatch[1]
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (
+        candidate &&
+        !candidate.toLowerCase().includes("sigla") &&
+        !candidate.toLowerCase().includes("casilla")
+      ) {
+        nombre_comercial = candidate;
+      }
+    }
+
     // Extraer Dirección (Casilla 41: CR, CARRERA, CL, CALLE, AV, TV, DG, etc.)
     const dirMatch = fullRawText.match(/\b((?:CR|CARRERA|CL|CALLE|AV|AVENIDA|TV|TRANSVERSAL|DG|DIAGONAL|AUTOPISTA|KM)\s+[A-Z0-9\s#\-.,]{5,60})\b/i);
     if (dirMatch) {
-      direccion = dirMatch[1].replace(/\s+/g, " ").trim();
+      direccion = sanitizeAddress(dirMatch[1]);
     }
 
     // Extraer Ciudad (Casilla 40)
@@ -431,26 +462,12 @@ export function parseRutPdfLocally(base64Data: string): {
       ciudad = ciudadMatch[1].trim();
     }
 
-    // Extraer Email (Casilla 42)
-    const emailMatch = fullRawText.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/);
-    if (emailMatch) {
-      email = emailMatch[1].toLowerCase().trim();
-    }
-
-    // Extraer Teléfono (Casilla 44: Celular colombiano 10 dígitos)
-    const telSpaced = fullRawText.match(/\b(3\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/);
-    if (telSpaced) {
-      telefono = telSpaced[1].replace(/\s+/g, "");
-    }
-
     return {
       razon_social,
       nombre_comercial,
       nit,
       ciudad,
       direccion,
-      email,
-      telefono
     };
   } catch (e) {
     console.error("Error al parsear el RUT localmente:", e);
@@ -458,6 +475,42 @@ export function parseRutPdfLocally(base64Data: string): {
   }
 }
 
+function sanitizeAddress(addr: string): string {
+  if (!addr || typeof addr !== "string") return "";
+  let clean = addr.trim();
+  clean = clean.split(/\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i)[0];
+  clean = clean.split(/\s*@.*/)[0];
+  clean = clean.split(/\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N)/i)[0];
+  const validTokens = new Set(['sur', 'norte', 'este', 'oeste', 'bis', 'apto', 'of', 'oficina', 'piso', 'int', 'interior', 'mz', 'lt', 'km', 'local', 'bodega', 'torre', 'bloque']);
+  const parts = clean.split(/\s+/);
+  while (parts.length > 0) {
+    const lastWord = parts[parts.length - 1].toLowerCase();
+    if (/^[a-z]{4,}$/i.test(lastWord) && !validTokens.has(lastWord)) {
+      parts.pop();
+    } else {
+      break;
+    }
+  }
+  return parts.join(' ').trim();
+}
+
+/**
+ * REGLAS ESTRUCTURADAS DEL PROMPT PARA EXTRACCIÓN DE RUT DIAN:
+ *
+ * 1. NIT: Extraer el número de identificación tributaria completo incluyendo el dígito de verificación (DV).
+ *    Formato: XXXXXXXXX-X (Ejemplo: 900745087-2).
+ * 2. RAZÓN SOCIAL: Extraer exclusivamente el valor del campo "35. Razón social".
+ * 3. NOMBRE COMERCIAL: Extraer exclusivamente el valor del campo "36. Nombre comercial".
+ * 4. CIUDAD: Extraer exclusivamente el valor del campo "40. Ciudad/Municipio".
+ * 5. DIRECCIÓN: Extraer exclusivamente el valor del campo "41. Dirección principal".
+ *    No agregar información de otros campos. No agregar nombres de personas.
+ *    No agregar correos electrónicos. No agregar teléfonos.
+ *    No concatenar texto que aparezca después de la dirección.
+ * 6. CORREO: Si se extrae correo electrónico, debe mantenerse como un dato independiente y nunca formar parte de la dirección.
+ * 7. SECTOR: NO inferir ni seleccionar el sector. Devolver vacío.
+ * 8. CLASIFICACIÓN: NO inferir ni seleccionar la clasificación. Devolver vacío.
+ * 9. SEDE: NO inferir ni copiar datos del RUT. Devolver vacío.
+ */
 export const extractRutData = async (file: {
   mimeType: string;
   data: string;
@@ -465,6 +518,7 @@ export const extractRutData = async (file: {
   razon_social?: string;
   nombre_comercial?: string;
   nit?: string;
+  dv?: string;
   ciudad?: string;
   direccion?: string;
   email?: string;
@@ -487,16 +541,26 @@ export const extractRutData = async (file: {
   }
 
   function buildResult(parsed: any, fallback?: any): {
-    razon_social?: string; nombre_comercial?: string; nit?: string;
+    razon_social?: string; nombre_comercial?: string; nit?: string; dv?: string;
     ciudad?: string; direccion?: string; email?: string; telefono?: string;
   } {
     const fb = fallback || {};
+    const rawDir = cleanVal(parsed.direccion) || fb.direccion || "";
+    const rawNit = cleanVal(parsed.nit) || fb.nit || "";
+    const rawDv = cleanVal(parsed.dv) || fb.dv || "";
+
+    let finalNit = rawNit ? String(rawNit).replace(/[^\d\-]/g, "").trim() : "";
+    if (finalNit && !finalNit.includes("-") && rawDv) {
+      finalNit = `${finalNit}-${rawDv}`;
+    }
+
     return {
       razon_social: cleanVal(parsed.razon_social) || fb.razon_social || "",
       nombre_comercial: cleanVal(parsed.nombre_comercial) || fb.nombre_comercial || "",
-      nit: cleanVal(parsed.nit) ? String(parsed.nit).replace(/[^\d\-]/g, "") : fb.nit || "",
+      nit: finalNit,
+      dv: rawDv,
       ciudad: cleanVal(parsed.ciudad) || fb.ciudad || "",
-      direccion: cleanVal(parsed.direccion) || fb.direccion || "",
+      direccion: sanitizeAddress(rawDir),
       email: cleanVal(parsed.email) || fb.email || "",
       telefono: cleanVal(parsed.telefono) || fb.telefono || "",
     };
@@ -523,9 +587,37 @@ export const extractRutData = async (file: {
       console.error("[RUT Client] ❌ Error del Backend:", errMsg);
       backendWarning = errMsg;
     } else {
-      const hasAnyField = result.data && (result.data.razon_social || result.data.nit || result.data.email || result.data.direccion || result.data.ciudad);
+      const hasAnyField = result.data && (
+        result.data.razon_social ||
+        result.data.nit ||
+        result.data.direccion ||
+        result.data.ciudad ||
+        result.data.nombre_comercial
+      );
+
       if (result.success && hasAnyField) {
-        return buildResult(result.data);
+        const backendData = result.data || {};
+
+        const backendComplete =
+          !!backendData.razon_social &&
+          !!backendData.nit &&
+          !!backendData.ciudad &&
+          !!backendData.direccion;
+
+        // Si el backend ya encontró los campos principales,
+        // NO hacemos otra extracción local.
+        if (backendComplete) {
+          return buildResult(backendData);
+        }
+
+        // Solo si faltan campos importantes, usamos el parser local
+        // como respaldo. Así no se hace doble trabajo en los casos buenos.
+        const localData = parseRutPdfLocally(file.data);
+
+        return buildResult(
+          backendData,
+          localData
+        );
       }
 
       if (result.warning) {

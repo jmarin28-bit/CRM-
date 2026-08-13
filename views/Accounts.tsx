@@ -472,30 +472,38 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
           if (data.razon_social) {
             setRazonSocial(data.razon_social);
           }
-          // Nombre Comercial y Sede son opcionales: NO duplicar ni forzar
+
           setNombreComercial(data.nombre_comercial || "");
-          setSede("");
 
-          if (data.nit) setNit(data.nit);
-          if (data.ciudad) setCiudad(data.ciudad);
-          if (data.direccion) setDireccion(data.direccion);
+          const rawNit = (data.nit || "").trim();
+          const rawDv = (data.dv || "").trim();
+          const nitCompleto = rawNit
+            ? (rawNit.includes("-") ? rawNit : `${rawNit}${rawDv ? `-${rawDv}` : ""}`)
+            : "";
 
-          // Auto-seleccionar Sector según Razón Social
-          const upperRs = (data.razon_social || "").toUpperCase();
-          if (upperRs.includes("PHARMA") || upperRs.includes("FARM") || upperRs.includes("BIOTEC") || upperRs.includes("MEDIC")) {
-            setSector("Farmacéutico / Biotecnología");
-          } else if (upperRs.includes("UNIV") || upperRs.includes("EDUCAC") || upperRs.includes("COLEGIO") || upperRs.includes("INVESTIGAC")) {
-            setSector("Educación / Investigación");
-          } else if (upperRs.includes("HOSPITAL") || upperRs.includes("SALUD") || upperRs.includes("CLINIC") || upperRs.includes("IPS")) {
-            setSector("Hospitalario / Salud");
-          } else if (upperRs.includes("ALIMENT") || upperRs.includes("BEBID") || upperRs.includes("AGRO")) {
-            setSector("Alimentos y Bebidas");
-          } else {
-            setSector("Laboratorio / Diagnóstico / Analítica");
+          if (nitCompleto) {
+            setNit(nitCompleto);
           }
 
-          // Auto-seleccionar Clasificación por defecto
-          setClasificacion("Potencial");
+          setSector("");
+          setClasificacion("");
+          setSede("");
+
+          if (data.ciudad) {
+            setCiudad(data.ciudad);
+          }
+
+          if (data.direccion) {
+            const cleanDir = data.direccion
+              .split(/\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i)[0]
+              .split(/\s*@.*/)[0]
+              .trim();
+            setDireccion(cleanDir);
+          }
+
+
+
+
 
           // Limpiar cualquier error de validación previo
           setFormErrors({});

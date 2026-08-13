@@ -730,6 +730,7 @@ function googleOAuthPlugin() {
               let pdfPages = 0;
               let fullText = '';
               let usedPdfParse = false;
+              let usedOpenRouterFallback = false;
 
               try {
                 const pdfParse = requireCJS('pdf-parse');
@@ -772,6 +773,21 @@ function googleOAuthPlugin() {
                     if (cleaned) rutResult.razon_social = cleaned;
                   }
 
+                  // 1B. Nombre Comercial (Casilla 36)
+                  // Solo se llena si existe un valor REAL entre la casilla 36 y la 37.
+                  // Si la casilla 36 está vacía, se deja vacía.
+                  // NO usar la casilla 37 (Sigla) como Nombre Comercial.
+                  const matchCasilla36 = fullText.match(
+                    /36\.\s*Nombre\s+comercial\s+(.{2,100}?)(?=\s+37\.)/i
+                  );
+
+                  if (matchCasilla36) {
+                    const cleaned = cleanExtracted(matchCasilla36[1]);
+                    if (cleaned) {
+                      rutResult.nombre_comercial = cleaned;
+                    }
+                  }
+
                   if (!rutResult.razon_social) {
                     const rsMatch = fullText.match(/([A-ZÁÉÍÓÚÑ0-9\s.\-&]{3,70}\s+(?:S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|E\.?U\.?|INC\.?|CORP\.?))/i);
                     if (rsMatch) {
@@ -788,25 +804,65 @@ function googleOAuthPlugin() {
                     }
                   }
 
-                  // 2. NIT (Casilla 5 - Extrae exactamente los 9 dígitos base del NIT)
+                  // 2. NIT (Casilla 5 y Casilla 6 - Formato exacto NIT-DV: 900745087-2)
                   const nitPatterns = [
                     /5\.\s*(?:N[IÍ]T|N[uú]mero\s+de\s+Identificaci[oó]n\s+Tributaria)?[:\s]*([0-9\s]{9,20})/i,
                     /N[IÍ]T[:\s]*([0-9\s]{9,20})/i,
                     /\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/
                   ];
+                  let nitBase = "";
                   for (const p of nitPatterns) {
                     const m = fullText.match(p);
                     if (m) {
                       const candidate = m[1].replace(/[^\d]/g, '');
-                      if (candidate.length >= 8) { rutResult.nit = candidate.substring(0, 9); break; }
+                      if (candidate.length >= 8) { nitBase = candidate.substring(0, 9); break; }
                     }
                   }
 
-                  // 3. Dirección (Casilla 41 - Captura completa p. ej. "CL 33 CR 74 B 146" o "CR 81 B 51 52")
+                  if (nitBase) {
+                    let dv = "";
+                    const cas6Match = fullText.match(/(?:6\.\s*(?:DV|D[ií]gito\s*de\s*verificaci[oó]n)?[:\s]*)(\d)\b/i);
+                    if (cas6Match) {
+                      dv = cas6Match[1];
+                    } else if (nitBase.length === 9) {
+                      const weights = [41, 37, 29, 23, 19, 17, 13, 7, 3];
+                      let sum = 0;
+                      for (let i = 0; i < 9; i++) sum += parseInt(nitBase[i], 10) * weights[i];
+                      const r = sum % 11;
+                      dv = r === 0 ? "0" : r === 1 ? "1" : String(11 - r);
+                    }
+                    rutResult.dv = dv;
+                    rutResult.nit = dv ? `${nitBase}-${dv}` : nitBase;
+                  }
+
+                  const sanitizeAddress = (addr: string) => {
+                    if (!addr) return null;
+                    let clean = addr.trim();
+                    clean = clean.split(/\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i)[0];
+                    clean = clean.split(/\s*@.*/)[0];
+                    clean = clean.split(/\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N)/i)[0];
+                    const validTokens = new Set(['sur', 'norte', 'este', 'oeste', 'bis', 'apto', 'of', 'oficina', 'piso', 'int', 'interior', 'mz', 'lt', 'km', 'local', 'bodega', 'torre', 'bloque']);
+                    const parts = clean.split(/\s+/);
+                    while (parts.length > 0) {
+                      const lastWord = parts[parts.length - 1].toLowerCase();
+                      if (/^[a-z]{4,}$/i.test(lastWord) && !validTokens.has(lastWord)) {
+                        parts.pop();
+                      } else {
+                        break;
+                      }
+                    }
+                    const res = parts.join(' ').trim();
+                    return res.length >= 3 ? res : null;
+                  };
+
+                  // 3. Dirección (Casilla 41 - Captura limpia p. ej. "CL 33 CR 74 B 146" o "CR 81 B 51 52")
                   const cas41Match = fullText.match(/(?:41\.\s*(?:Direcci[oó]n\s*principal|Direcci[oó]n)?[:\s]*)([A-Z0-9ÁÉÍÓÚÑ\s#.\-/#]{5,80}?)(?=\s+(?:42\.|42\s|43\.|44\.|45\.|46\.|Correo|Email|Tel[eé]fono|CLASE|INFORMACI[OÓ]N))/i);
                   if (cas41Match) {
                     const cleaned = cleanExtracted(cas41Match[1]);
-                    if (cleaned) rutResult.direccion = cleaned;
+                    if (cleaned) {
+                      const sanitized = sanitizeAddress(cleaned);
+                      if (sanitized) rutResult.direccion = sanitized;
+                    }
                   }
 
                   if (!rutResult.direccion) {
@@ -817,7 +873,10 @@ function googleOAuthPlugin() {
                       const m = fullText.match(p);
                       if (m && m[1]) {
                         const cleaned = cleanExtracted(m[1].trim());
-                        if (cleaned && cleaned.length >= 5) { rutResult.direccion = cleaned; break; }
+                        if (cleaned) {
+                          const sanitized = sanitizeAddress(cleaned);
+                          if (sanitized && sanitized.length >= 5) { rutResult.direccion = sanitized; break; }
+                        }
                       }
                     }
                   }
@@ -835,42 +894,6 @@ function googleOAuthPlugin() {
                       rutResult.ciudad = ciudadKnown[1].trim();
                     }
                   }
-
-                  // 5. Email (Casilla 42)
-                  const emailM = fullText.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
-                  if (emailM) rutResult.email = emailM[1].toLowerCase();
-
-                  // 6. Teléfono (Casilla 44/45)
-                  const telM = fullText.match(/\b(3[0-9]{9})\b/) || fullText.match(/\b([2-8]\d{6,9})\b/);
-                  if (telM) rutResult.telefono = telM[1];(CL\s+\d+[\w\s#.\-]{3,40})/i,
-                    /\b(DG\s+\d+[\w\s#.\-]{3,40})/i,
-                    /\b(CRA?\s+\d+[\w\s#.\-]{3,40})/i,
-                    /\b(CALLE\s+\d+[\w\s#.\-]{3,40})/i,
-                    /\b(CARRERA\s+\d+[\w\s#.\-]{3,40})/i
-                  ];
-                  for (const p of dirPatterns) {
-                    const m = fullText.match(p);
-                    if (m && m[1]) {
-                      const cleaned = cleanExtracted(m[1].trim());
-                      if (cleaned && cleaned.length >= 5) { rutResult.direccion = cleaned; break; }
-                    }
-                  }
-
-
-
-                  // 4. Ciudad / Municipio (Casilla 40)
-                  const ciudadKnown = fullText.match(/\b(Bogot[aá](?:\s*D\.?\s*C\.?)?|Medell[ií]n|Cali|Barranquilla|Cartagena|Bucaramanga|Pereira|Manizales|C[uú]cuta|Ibagu[eé]|Neiva|Santa\s+Marta|Villavicencio|Rionegro|Envigado|Itag[uü][eé]|Ch[ií]a|Soacha|Palmira|Bello|Pasto|Monter[ií]a|Valledupar)\b/i);
-                  if (ciudadKnown) {
-                    rutResult.ciudad = ciudadKnown[1].trim();
-                  }
-
-                  // 5. Email (Casilla 42)
-                  const emailM = fullText.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
-                  if (emailM) rutResult.email = emailM[1].toLowerCase();
-
-                  // 6. Teléfono (Casilla 44/45)
-                  const telM = fullText.match(/\b(3[0-9]{9})\b/) || fullText.match(/\b([2-8]\d{6,9})\b/);
-                  if (telM) rutResult.telefono = telM[1];
 
                   if (rutResult.razon_social && rutResult.nit) {
                     usedPdfParse = true;
@@ -890,7 +913,13 @@ function googleOAuthPlugin() {
 
               if (!hasEnoughText) {
                 console.log('[RUT Backend] 🛑 El PDF no contiene texto digital seleccionable suficiente. Se omite llamada a OpenRouter.');
-              } else if ((!rutResult.razon_social || !rutResult.nit) && openRouterKey) {
+              } else if (
+                !rutResult.razon_social &&
+                !rutResult.nit &&
+                !rutResult.ciudad &&
+                !rutResult.direccion &&
+                openRouterKey
+              ) {
                 usedOpenRouterFallback = true;
                 console.log(`[RUT Backend] 🤖 Using OpenRouter fallback: ${usedOpenRouterFallback}`);
 
@@ -903,17 +932,24 @@ Eres un sistema experto en extracción de datos del RUT (Registro Único Tributa
 Analiza el siguiente texto de RUT DIAN y responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
 
 {
-  "razon_social": "Nombre de la empresa o nombre completo de la persona natural (casillas 31-34 o 35)",
-  "nombre_comercial": "Nombre comercial (casilla 36) o vacío",
-  "nit": "Número de NIT sin DV",
-  "ciudad": "Ciudad o municipio principal",
-  "direccion": "Dirección física",
-  "email": "Correo electrónico",
-  "telefono": "Número telefónico"
+  "razon_social": "Razón Social o Nombre Completo",
+  "nombre_comercial": "Nombre Comercial",
+  "nit": "NIT completo con DV formato XXXXXXXXX-X",
+  "ciudad": "Ciudad o Municipio",
+  "direccion": "Dirección Principal"
 }
 
-REGLAS:
-- Si es persona natural, combina casillas 31, 32, 33, 34 (Nombres y Apellidos).
+REGLAS ESTRUCTURADAS DE EXTRACCIÓN:
+- Extrae los datos exclusivamente de los campos correspondientes del RUT.
+- NIT: Extraer el número de identificación tributaria completo incluyendo el dígito de verificación (DV). El resultado debe tener este formato: XXXXXXXXX-X (Ejemplo: 900745087-2).
+- RAZÓN SOCIAL: Extraer exclusivamente el valor del campo "35. Razón social" (o casillas 31-34 si es persona natural).
+- NOMBRE COMERCIAL: Extraer exclusivamente el valor del campo "36. Nombre comercial".
+- CIUDAD: Extraer exclusivamente el valor del campo "40. Ciudad/Municipio".
+- DIRECCIÓN: Extraer exclusivamente el valor del campo "41. Dirección principal". No agregar información de otros campos. No agregar nombres de personas. No agregar correos electrónicos. No agregar teléfonos. No concatenar texto que aparezca después de la dirección.
+- CORREO: Si se extrae correo electrónico, debe mantenerse como un dato independiente y nunca formar parte de la dirección.
+- SECTOR: NO inferir ni seleccionar el sector. Devolver vacío "".
+- CLASIFICACIÓN: NO inferir ni seleccionar la clasificación. Devolver vacío "".
+- SEDE: NO inferir ni copiar datos del RUT. Devolver vacío "".
 - NO devuelvas números de casilla ni texto legal.
 - Si no encuentras un campo, pon "".
 
@@ -1001,15 +1037,20 @@ ${fullText.substring(0, 4000)}
               const filteredData: Record<string, string | null> = {
                 razon_social: cleanValue(rutResult.razon_social),
                 nombre_comercial: cleanValue(rutResult.nombre_comercial) || null,
-                nit: rutResult.nit ? String(rutResult.nit).replace(/[^\d\-]/g, '') || null : null,
+                nit: rutResult.nit
+                  ? String(rutResult.nit).replace(/[^\d\-]/g, '').trim() || null
+                  : null,
+                dv: rutResult.dv ? String(rutResult.dv).trim() : null,
                 direccion: cleanValue(rutResult.direccion),
                 ciudad: cleanValue(rutResult.ciudad),
-                email: rutResult.email || null,
-                telefono: rutResult.telefono || null,
               };
 
               // Retornar error HTTP si OpenRouter falló o respuesta exitosa (200) si se extrajeron datos
-              const isDataEmpty = !filteredData.razon_social && !filteredData.nit && !filteredData.email && !filteredData.ciudad;
+              const isDataEmpty =
+                !filteredData.razon_social &&
+                !filteredData.nit &&
+                !filteredData.ciudad &&
+                !filteredData.direccion;
               
               if (isDataEmpty && openRouterError) {
                 console.error('[RUT Backend] ❌ Error en OpenRouter:', openRouterError);
