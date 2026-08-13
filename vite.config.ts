@@ -79,6 +79,7 @@ import {
   createGoogleCalendarEvent,
   writeAuditLog
 } from './server/google_api';
+import { extractNitFromText, normalizeNit, nitDebugWindow } from './services/rutNit';
 
 // ─── CORS: lista de orígenes permitidos ─────────────────────────────────────
 // Antes se respondía `Access-Control-Allow-Origin: *` a todo, lo que permitía
@@ -804,35 +805,20 @@ function googleOAuthPlugin() {
                     }
                   }
 
-                  // 2. NIT (Casilla 5 y Casilla 6 - Formato exacto NIT-DV: 900745087-2)
-                  const nitPatterns = [
-                    /5\.\s*(?:N[IÍ]T|N[uú]mero\s+de\s+Identificaci[oó]n\s+Tributaria)?[:\s]*([0-9\s]{9,20})/i,
-                    /N[IÍ]T[:\s]*([0-9\s]{9,20})/i,
-                    /\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/
-                  ];
-                  let nitBase = "";
-                  for (const p of nitPatterns) {
-                    const m = fullText.match(p);
-                    if (m) {
-                      const candidate = m[1].replace(/[^\d]/g, '');
-                      if (candidate.length >= 8) { nitBase = candidate.substring(0, 9); break; }
-                    }
-                  }
-
-                  if (nitBase) {
-                    let dv = "";
-                    const cas6Match = fullText.match(/(?:6\.\s*(?:DV|D[ií]gito\s*de\s*verificaci[oó]n)?[:\s]*)(\d)\b/i);
-                    if (cas6Match) {
-                      dv = cas6Match[1];
-                    } else if (nitBase.length === 9) {
-                      const weights = [41, 37, 29, 23, 19, 17, 13, 7, 3];
-                      let sum = 0;
-                      for (let i = 0; i < 9; i++) sum += parseInt(nitBase[i], 10) * weights[i];
-                      const r = sum % 11;
-                      dv = r === 0 ? "0" : r === 1 ? "1" : String(11 - r);
-                    }
-                    rutResult.dv = dv;
-                    rutResult.nit = dv ? `${nitBase}-${dv}` : nitBase;
+                  // 2. NIT (Casilla 5) y DV (Casilla 6), formato NIT-DV: 900745087-2.
+                  // La lógica vive en services/rutNit.ts porque el parser local
+                  // del navegador necesita exactamente la misma; ver ese archivo
+                  // para el detalle de los formatos que soporta.
+                  const nitFound = extractNitFromText(fullText);
+                  if (nitFound.nit) {
+                    rutResult.nit = nitFound.nit;
+                    rutResult.dv = nitFound.dv;
+                    console.log(`[RUT Backend] 🔢 NIT detectado: ${nitFound.nit} (score ${nitFound.score}, DV ${nitFound.dvSource})`);
+                  } else {
+                    // Sin esto no hay forma de saber por qué falló: se imprime el
+                    // trozo de texto donde debería estar la casilla 5.
+                    console.warn('[RUT Backend] ⚠️ No se pudo detectar el NIT. Texto alrededor de la casilla 5:');
+                    console.warn(`[RUT Backend]    "${nitDebugWindow(fullText)}"`);
                   }
 
                   const sanitizeAddress = (addr: string) => {
@@ -911,15 +897,16 @@ function googleOAuthPlugin() {
               // ── PASO 2: Enriquecimiento con OpenRouter API (SOLO SI TIENE TEXTO SUFICIENTE) ──
               let openRouterError: string | null = null;
 
+              // La condición anterior sólo pedía ayuda a la IA cuando NO se había
+              // extraído absolutamente nada. Como razón social, ciudad y dirección
+              // casi siempre se leen bien, un NIT ausente nunca llegaba a tener
+              // segunda oportunidad: el formulario se abría con el NIT vacío.
+              // Ahora basta con que falte alguno de los dos campos obligatorios.
+              const missingRequired = !rutResult.razon_social || !rutResult.nit;
+
               if (!hasEnoughText) {
                 console.log('[RUT Backend] 🛑 El PDF no contiene texto digital seleccionable suficiente. Se omite llamada a OpenRouter.');
-              } else if (
-                !rutResult.razon_social &&
-                !rutResult.nit &&
-                !rutResult.ciudad &&
-                !rutResult.direccion &&
-                openRouterKey
-              ) {
+              } else if (missingRequired && openRouterKey) {
                 usedOpenRouterFallback = true;
                 console.log(`[RUT Backend] 🤖 Using OpenRouter fallback: ${usedOpenRouterFallback}`);
 
@@ -998,7 +985,16 @@ ${fullText.substring(0, 4000)}
                           const parsed = JSON.parse(jsonMatch);
                           if (parsed && typeof parsed === 'object') {
                             if (parsed.razon_social && !rutResult.razon_social) rutResult.razon_social = parsed.razon_social;
-                            if (parsed.nit && !rutResult.nit) rutResult.nit = parsed.nit;
+                            if (parsed.nit && !rutResult.nit) {
+                              // El modelo suele devolver el NIT sin DV o con puntos
+                              // de miles; se normaliza antes de guardarlo.
+                              const normalized = normalizeNit(parsed.nit);
+                              if (normalized) {
+                                rutResult.nit = normalized;
+                                rutResult.dv = normalized.split('-')[1] || '';
+                              }
+                            }
+                            if (parsed.nombre_comercial && !rutResult.nombre_comercial) rutResult.nombre_comercial = parsed.nombre_comercial;
                             if (parsed.ciudad && !rutResult.ciudad) rutResult.ciudad = parsed.ciudad;
                             if (parsed.direccion && !rutResult.direccion) rutResult.direccion = parsed.direccion;
                             if (parsed.email && !rutResult.email) rutResult.email = parsed.email;
@@ -1037,9 +1033,7 @@ ${fullText.substring(0, 4000)}
               const filteredData: Record<string, string | null> = {
                 razon_social: cleanValue(rutResult.razon_social),
                 nombre_comercial: cleanValue(rutResult.nombre_comercial) || null,
-                nit: rutResult.nit
-                  ? String(rutResult.nit).replace(/[^\d\-]/g, '').trim() || null
-                  : null,
+                nit: normalizeNit(rutResult.nit, rutResult.dv) || null,
                 dv: rutResult.dv ? String(rutResult.dv).trim() : null,
                 direccion: cleanValue(rutResult.direccion),
                 ciudad: cleanValue(rutResult.ciudad),

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:rut": "node --experimental-strip-types services/rutNit.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "6.1.0",

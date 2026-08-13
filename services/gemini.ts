@@ -1,4 +1,5 @@
 import { AccountV2, ContactV2, ActivityV2, OpportunityV2 } from "../types";
+import { extractNitFromText, normalizeNit } from "./rutNit";
 
 /**
  * Extrae el JSON de una respuesta del modelo.
@@ -394,30 +395,12 @@ export function parseRutPdfLocally(base64Data: string): {
     let telefono = "";
     let nombre_comercial = "";
 
-    // Extraer NIT (Casilla 5 y Casilla 6: Formato exacto NIT-DV: 900745087-2)
-    let nitBase = "";
-    const nitSpacedMatch = fullRawText.match(/\b([89]\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b/);
-    if (nitSpacedMatch) {
-      nitBase = nitSpacedMatch[1].replace(/\s+/g, "");
-    } else {
-      const nitDirect = fullRawText.match(/\b([89]\d{8,9})\b/);
-      if (nitDirect) nitBase = nitDirect[1];
-    }
-
-    let dv = "";
-    if (nitBase) {
-      const cas6Match = fullRawText.match(/(?:6\.\s*(?:DV|D[ií]gito\s*de\s*verificaci[oó]n)?[:\s]*)(\d)\b/i);
-      if (cas6Match) {
-        dv = cas6Match[1];
-      } else if (nitBase.length === 9) {
-        const weights = [41, 37, 29, 23, 19, 17, 13, 7, 3];
-        let sum = 0;
-        for (let i = 0; i < 9; i++) sum += parseInt(nitBase[i], 10) * weights[i];
-        const r = sum % 11;
-        dv = r === 0 ? "0" : r === 1 ? "1" : String(11 - r);
-      }
-      nit = dv ? `${nitBase}-${dv}` : nitBase;
-    }
+    // Extraer NIT (Casilla 5) y DV (Casilla 6): formato NIT-DV, 900745087-2.
+    // Comparte el mismo extractor que usa el backend, así los dos caminos
+    // reconocen exactamente los mismos formatos de RUT.
+    const nitFound = extractNitFromText(fullRawText);
+    const dv = nitFound.dv;
+    nit = nitFound.nit;
 
     // Extraer Razón Social (Casilla 35 - Empresa con S.A.S., LTDA, S.A., E.U., etc. o Persona Natural)
     const empresaMatch = fullRawText.match(/\b([A-Z0-9\s.\-&]{3,60}\s+(?:S\.?A\.?S\.?|LTDA|S\.?A\.?|E\.?U\.?|INC|CORP))\b/i);
@@ -549,12 +532,13 @@ export const extractRutData = async (file: {
     const fb = fallback || {};
     const rawDir = cleanVal(parsed.direccion) || fb.direccion || "";
     const rawNit = cleanVal(parsed.nit) || fb.nit || "";
-    const rawDv = cleanVal(parsed.dv) || fb.dv || "";
 
-    let finalNit = rawNit ? String(rawNit).replace(/[^\d\-]/g, "").trim() : "";
-    if (finalNit && !finalNit.includes("-") && rawDv) {
-      finalNit = `${finalNit}-${rawDv}`;
-    }
+    // El DV es un solo carácter, así que NO puede pasar por cleanVal: esa
+    // función descarta cualquier valor de menos de 2 caracteres y se estaba
+    // comiendo el dígito de verificación en todos los casos.
+    const rawDv = String(parsed.dv || fb.dv || "").replace(/\D/g, "").slice(0, 1);
+
+    const finalNit = normalizeNit(rawNit, rawDv);
 
     return {
       razon_social: cleanVal(parsed.razon_social) || fb.razon_social || "",
