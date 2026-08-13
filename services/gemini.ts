@@ -348,6 +348,7 @@ export function parseRutPdfLocally(base64Data: string): {
   razon_social?: string;
   nombre_comercial?: string;
   nit?: string;
+  dv?: string;
   ciudad?: string;
   direccion?: string;
   email?: string;
@@ -403,8 +404,8 @@ export function parseRutPdfLocally(base64Data: string): {
       if (nitDirect) nitBase = nitDirect[1];
     }
 
+    let dv = "";
     if (nitBase) {
-      let dv = "";
       const cas6Match = fullRawText.match(/(?:6\.\s*(?:DV|D[ií]gito\s*de\s*verificaci[oó]n)?[:\s]*)(\d)\b/i);
       if (cas6Match) {
         dv = cas6Match[1];
@@ -466,6 +467,7 @@ export function parseRutPdfLocally(base64Data: string): {
       razon_social,
       nombre_comercial,
       nit,
+      dv,
       ciudad,
       direccion,
     };
@@ -566,10 +568,10 @@ export const extractRutData = async (file: {
     };
   }
 
-  // ── 1. PRIMARIO: Backend /api/extract-rut (usa pdf-parse + Gemini API con Bearer auth) ──
-  // El backend extrae texto real del PDF con pdf-parse (funciona offline, sin API key)
-  // y luego opcionalmente lo enriquece con Gemini API usando headers Bearer.
+  // ── 1. PRIMARIO: Backend /api/extract-rut + 2. COMPLEMENTO LOCAL ──
+  let backendData: any = {};
   let backendWarning: string | null = null;
+
   try {
     console.log("[RUT Client] 📤 Enviando PDF al backend /api/extract-rut...");
     const res = await fetch("/api/extract-rut", {
@@ -582,60 +584,36 @@ export const extractRutData = async (file: {
     const result = await res.json();
     console.log("[RUT Client] 📥 Respuesta del backend:", result);
 
-    if (!res.ok || result.success === false) {
-      const errMsg = result.error || `Error HTTP ${res.status} del backend`;
-      console.error("[RUT Client] ❌ Error del Backend:", errMsg);
-      backendWarning = errMsg;
-    } else {
-      const hasAnyField = result.data && (
-        result.data.razon_social ||
-        result.data.nit ||
-        result.data.direccion ||
-        result.data.ciudad ||
-        result.data.nombre_comercial
-      );
-
-      if (result.success && hasAnyField) {
-        const backendData = result.data || {};
-
-        const backendComplete =
-          !!backendData.razon_social &&
-          !!backendData.nit &&
-          !!backendData.ciudad &&
-          !!backendData.direccion;
-
-        // Si el backend ya encontró los campos principales,
-        // NO hacemos otra extracción local.
-        if (backendComplete) {
-          return buildResult(backendData);
-        }
-
-        // Solo si faltan campos importantes, usamos el parser local
-        // como respaldo. Así no se hace doble trabajo en los casos buenos.
-        const localData = parseRutPdfLocally(file.data);
-
-        return buildResult(
-          backendData,
-          localData
-        );
-      }
-
-      if (result.warning) {
-        backendWarning = result.warning;
-        console.warn("[RUT Client] ⚠️ Advertencia del Backend:", result.warning);
-      }
+    if (res.ok && result.success && result.data) {
+      backendData = result.data || {};
+    } else if (result && result.error) {
+      backendWarning = result.error;
+      console.error("[RUT Client] ❌ Error del Backend:", result.error);
     }
   } catch (err: any) {
     console.error("[RUT Client] ❌ Error conectando con backend /api/extract-rut:", err.message);
-    if (!backendWarning) backendWarning = err.message;
+    backendWarning = err.message;
   }
 
-
-  // ── 2. ÚLTIMO RECURSO: Extracción local por patrones en el cliente ──
+  // Extractor local para complementar cualquier campo faltante
   const localData = parseRutPdfLocally(file.data);
-  if (localData.razon_social || localData.nit) {
-    console.log("[RUT Client] 📄 RUT extraído mediante procesador local DIAN:", localData);
-    return localData;
+
+  // FUSIONAR CAMPO A CAMPO (Backend = fuente principal, Local = complemento para faltantes)
+  const finalData = {
+    razon_social: backendData.razon_social || localData.razon_social || "",
+    nombre_comercial: backendData.nombre_comercial || localData.nombre_comercial || "",
+    nit: backendData.nit || localData.nit || "",
+    dv: backendData.dv || localData.dv || "",
+    direccion: backendData.direccion || localData.direccion || "",
+    ciudad: backendData.ciudad || localData.ciudad || "",
+  };
+
+  console.log('[RUT] Backend data:', backendData);
+  console.log('[RUT] Local data:', localData);
+  console.log('[RUT] Final merged data:', finalData);
+
+  if (finalData.razon_social || finalData.nit || finalData.ciudad || finalData.direccion) {
+    return buildResult(finalData);
   }
 
   throw new Error(backendWarning || "No se pudo leer automáticamente este RUT. Asegúrate de subir el PDF original descargado de la DIAN o ingresa los datos manualmente.");
