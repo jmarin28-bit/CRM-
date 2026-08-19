@@ -9,13 +9,16 @@ import {
   updateContact, 
   deleteContact,
   createContact,
-  deleteActivity
+  deleteActivity,
+  isActivityDone,
+  completeFollowUpActivity
 } from '../services/storage';
 import { generateAIEmailResponse, generateAIWhatsAppResponse } from '../services/gemini';
 import { ContactV2, AccountV2, ActivityV2, CRMUser } from '../types';
+import { CompleteFollowUpModal } from '../components/CompleteFollowUpModal';
 import { 
   User, Mail, Phone, MessageCircle, Briefcase, 
-  Plus, X, Search, Trash2, Building2, Calendar, Video, Clock, StickyNote
+  Plus, X, Search, Trash2, Building2, Calendar, Video, Clock, StickyNote, CheckCircle2
 } from 'lucide-react';
 
 const ACTIVITY_FILTERS = [
@@ -128,6 +131,8 @@ export default function Contacts({ activeUser }: { activeUser?: CRMUser }) {
   const [callUrgency, setCallUrgency] = useState("Media");
   const [callNextAction, setCallNextAction] = useState("");
   const [callFollowUpAt, setCallFollowUpAt] = useState("");
+
+  const [followUpToComplete, setFollowUpToComplete] = useState<ActivityV2 | null>(null);
 
   // Gmail Modal State
   const [showGmailModal, setShowGmailModal] = useState(false);
@@ -290,7 +295,7 @@ export default function Contacts({ activeUser }: { activeUser?: CRMUser }) {
     );
 
     return all
-      .filter((a) => !companionIds.has(a.id))
+      .filter((a) => !(companionIds.has(a.id) && !isActivityDone(a)))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [selectedContactData, refresh]);
 
@@ -829,7 +834,30 @@ export default function Contacts({ activeUser }: { activeUser?: CRMUser }) {
                                 </div>
                                 <p className="text-[11px] font-bold text-slate-400 uppercase mt-1">{formatFullDateTime(act.createdAt)} • {act.user || "Sistema"}</p>
                               </div>
-                              {act.followUpAt && <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter italic">Seguimiento: {formatFullDateTime(act.followUpAt)}</div>}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {act.followUpAt && !isActivityDone(act) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setFollowUpToComplete(act)}
+                                    className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
+                                    title="Marcar este seguimiento como realizado"
+                                  >
+                                    <CheckCircle2 size={11} />
+                                    Marcar realizado
+                                  </button>
+                                )}
+                                {act.followUpAt && isActivityDone(act) && (
+                                  <div className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter italic flex items-center gap-1">
+                                    <CheckCircle2 size={11} />
+                                    Completado
+                                  </div>
+                                )}
+                                {act.followUpAt && !isActivityDone(act) && (
+                                  <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter italic">
+                                    Seguimiento: {formatFullDateTime(act.followUpAt)}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <p className="text-sm text-slate-700 font-bold leading-relaxed whitespace-pre-wrap break-words">
                               {previewText(act.description, expanded, 240, isFollowUp)}
@@ -1373,6 +1401,23 @@ export default function Contacts({ activeUser }: { activeUser?: CRMUser }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL COMPLETAR SEGUIMIENTO CON GESTIÓN */}
+      {followUpToComplete && (
+        <CompleteFollowUpModal
+          isOpen={!!followUpToComplete}
+          activity={followUpToComplete}
+          onClose={() => setFollowUpToComplete(null)}
+          onConfirm={(activityId, resultNote, options) => {
+            completeFollowUpActivity(activityId, resultNote, activeUser || undefined);
+            setFollowUpToComplete(null);
+            setRefresh((r) => r + 1);
+            if (options?.createQuote) {
+              window.dispatchEvent(new CustomEvent("axis:navigate", { detail: { page: "quotes" } }));
+            }
+          }}
+        />
       )}
     </div>
   );

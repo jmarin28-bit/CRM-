@@ -13,6 +13,9 @@ dist-ssr
 *.local
 .env
 .env.*
+crm-backup-*.json
+server/google_tokens.json
+server/audit_logs.json
 
 
 # Editor directories and files

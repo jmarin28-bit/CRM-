@@ -1254,6 +1254,39 @@ export const updateActivity = (activityId: string, updates: any) => {
   return updatedActivities.find((activity: any) => activity.id === activityId);
 };
 
+export function completeFollowUpActivity(
+  activityId: string,
+  resultNote?: string,
+  user?: CRMUser
+): ActivityV2 | null {
+  const activities = readJSON<ActivityV2[]>(ACTIVITIES_KEY, []);
+  const activeUser = user || getActiveUser();
+  const nowIso = new Date().toISOString();
+
+  const targetIndex = activities.findIndex(a => a.id === activityId);
+  if (targetIndex === -1) return null;
+
+  const target = activities[targetIndex];
+  const trimmedNote = (resultNote || "").trim();
+
+  const updatedTarget: ActivityV2 = {
+    ...target,
+    status: "completada",
+    type: "Seguimiento completado",
+    completedAt: nowIso,
+    completedBy: activeUser?.name || "Usuario",
+    resultNote: trimmedNote || undefined,
+    description: trimmedNote
+      ? `${target.description ? target.description + "\n\n" : ""}Resultado: ${trimmedNote}`
+      : target.description,
+    updatedAt: nowIso,
+  };
+
+  activities[targetIndex] = updatedTarget;
+  writeJSON(ACTIVITIES_KEY, activities);
+  return updatedTarget;
+}
+
 export function migrateLegacyActivities() {
   const activities = readJSON<ActivityV2[]>(ACTIVITIES_KEY, []);
   const contacts = readJSON<ContactV2[]>("crm_contacts_v2", []);

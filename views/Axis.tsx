@@ -21,8 +21,10 @@ import {
   deleteActivity,
   clearAllPendingFollowUps,
   getActiveUser,
-  isActivityDone
+  isActivityDone,
+  completeFollowUpActivity
 } from "../services/storage";
+import { CompleteFollowUpModal } from "../components/CompleteFollowUpModal";
 
 // ==========================================
 // HELPERS DE BUSQUEDA Y NORMALIZACION
@@ -385,6 +387,7 @@ export default function Axis() {
   const [axisSuggestions, setAxisSuggestions] = useState<AxisSuggestion[]>([]);
   const [refresh, setRefresh] = useState(0);
   const [lastFollowUpSummary, setLastFollowUpSummary] = useState<LastFollowUpSummary | null>(null);
+  const [followUpToComplete, setFollowUpToComplete] = useState<any | null>(null);
 
   const axisContacts = useMemo(() => listContactsByUser(), [refresh]);
   const axisAccounts = useMemo(() => listAccountsByUser(), [refresh]);
@@ -1366,10 +1369,10 @@ export default function Axis() {
                       >
                         Próximo lunes
                       </button>
-                       <button
+                      <button
                         type="button"
-                        onClick={() => handleCompleteFollowUp(activity.id)}
-                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 transition-colors flex items-center gap-1"
+                        onClick={() => setFollowUpToComplete(activity)}
+                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <CheckCircle2 size={13} />
                         ✓ Marcar como realizada
@@ -1391,6 +1394,27 @@ export default function Axis() {
         </div>
 
       </div>
+
+      {followUpToComplete && (
+        <CompleteFollowUpModal
+          isOpen={!!followUpToComplete}
+          activity={followUpToComplete}
+          onClose={() => setFollowUpToComplete(null)}
+          onConfirm={(activityId, resultNote, options) => {
+            const act = followUpToComplete;
+            completeFollowUpActivity(activityId, resultNote);
+            setFollowUpToComplete(null);
+            setRefresh((prev) => prev + 1);
+            setAxisMessage("Seguimiento marcado como completado y registrado en historial.");
+
+            if (options?.createQuote && act) {
+              handleCreateQuoteFromFollowUp(act);
+            } else if (options?.createNextFollowUp && act?.contactId) {
+              handleOpenContactFromFollowUp(act.contactId);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

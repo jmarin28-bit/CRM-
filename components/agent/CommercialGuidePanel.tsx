@@ -12,6 +12,9 @@ import {
   Square,
 } from "lucide-react";
 import { getTodayCommercialBriefing } from "../../services/commercialGuide";
+import { listActivities, completeFollowUpActivity } from "../../services/storage";
+import { CompleteFollowUpModal } from "../CompleteFollowUpModal";
+import { ActivityV2 } from "../../types";
 
 const priorityClasses: Record<string, string> = {
   alta: "border-red-200 bg-red-50 text-red-700",
@@ -521,6 +524,7 @@ function GuideItemCard({
  *****************************************************************/
 export default function CommercialGuidePanel() {
   const [refreshKey, setRefreshKey] = useState(0);
+  const [followUpToComplete, setFollowUpToComplete] = useState<ActivityV2 | null>(null);
   const briefing = useMemo(() => getTodayCommercialBriefing(), [refreshKey]);
   const [chatInput, setChatInput] = useState("");
   const [pendingVoiceDraft, setPendingVoiceDraft] = useState("");
@@ -1461,22 +1465,19 @@ export default function CommercialGuidePanel() {
       return;
     }
 
-    const confirmed = window.confirm(
-      "¿Confirmas marcar este seguimiento como realizado?"
-    );
+    const allActivities = listActivities();
+    const targetActivity = allActivities.find((a) => a.id === activityId);
 
-    if (!confirmed) return;
-
-    updateActivityLocally(activityId, {
-      status: "completada",
-      completedAt: new Date().toISOString(),
-    });
-
-    setRefreshKey((prev) => prev + 1);
-
-    addAgentNotice(
-      "Listo. Marqué el seguimiento como realizado y actualicé el radar comercial."
-    );
+    if (targetActivity) {
+      setFollowUpToComplete(targetActivity);
+    } else {
+      setFollowUpToComplete({
+        id: activityId,
+        accountId: "",
+        type: "Seguimiento",
+        description: "Seguimiento comercial",
+      } as ActivityV2);
+    }
   };
 
   const handlePostponeFollowUp = (activityId: string | undefined, days: number) => {
@@ -1832,6 +1833,25 @@ export default function CommercialGuidePanel() {
           </Section>
         )}
       </div>
+
+      {followUpToComplete && (
+        <CompleteFollowUpModal
+          isOpen={!!followUpToComplete}
+          activity={followUpToComplete}
+          onClose={() => setFollowUpToComplete(null)}
+          onConfirm={(activityId, resultNote, options) => {
+            const act = followUpToComplete;
+            completeFollowUpActivity(activityId, resultNote);
+            setFollowUpToComplete(null);
+            setRefreshKey((prev) => prev + 1);
+            addAgentNotice("Listo. Marqué el seguimiento como realizado y registré la gestión.");
+
+            if (options?.createQuote && act?.description) {
+              openQuoteReview(act.description);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

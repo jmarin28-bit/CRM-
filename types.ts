@@ -253,6 +253,8 @@ export type ActivityV2 = {
   createdAt: string;
   updatedAt?: string; // lo escribe updateActivity
   completedAt?: string | null; // fecha en que se marcó como realizada/completada
+  completedBy?: string; // usuario que marcó como completado
+  resultNote?: string; // nota o resultado de la gestión
   followUpAt?: string | null;
   status?: ActivityStatus;
   followUpActivityId?: string; // vínculo entre gestión y su seguimiento programado
