@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAccount,
+  updateAccount,
   createContact,
   listAccountsByUser,
   listContactsByAccountId,
@@ -20,6 +21,7 @@ import type {
   ActivityV2,
 } from "../types";
 import { extractRutData } from "../services/gemini";
+import { AliasEditor } from "../components/AliasEditor";
 import {
   User,
   Mail,
@@ -831,6 +833,26 @@ export default function Accounts({ pendingData, onClearPending }: AccountsProps)
                         </div>
                       </div>
                     </div>
+                  </section>
+
+                  {/* Punto 4: alias de voz para que el asistente de cotización
+                      reconozca esta empresa cuando se dicta con otro nombre. */}
+                  <section className="bg-white border border-slate-200 rounded-[30px] p-6">
+                    <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.22em] mb-5">
+                      Reconocimiento por voz
+                    </p>
+                    <AliasEditor
+                      kind="empresa"
+                      entityName={
+                        selectedAccount.nombreComercial || selectedAccount.razonSocial
+                      }
+                      value={selectedAccount.aliases}
+                      onChange={(aliases) => {
+                        const saved = updateAccount({ ...selectedAccount, aliases });
+                        if (saved) setSelectedAccount(saved);
+                        setRefresh((x) => x + 1);
+                      }}
+                    />
                   </section>
 
                   <section className="bg-white border border-slate-200 rounded-[30px] p-6">

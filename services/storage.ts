@@ -716,6 +716,35 @@ export function createAccount(input: Omit<AccountV2, "id" | "createdAt" | "owner
 }
 
 /**
+ * Actualiza una cuenta existente.
+ *
+ * No existía: las cuentas solo se podían crear o borrar. Hizo falta para
+ * poder editar los alias de voz que usa el asistente de cotización.
+ *
+ * `id`, `createdAt` y `ownerId` no se tocan aunque vengan en el objeto: son
+ * la identidad del registro, y sobrescribirlos por accidente dejaría la
+ * cuenta huérfana de sus contactos, oportunidades y cotizaciones.
+ */
+export function updateAccount(account: AccountV2): AccountV2 | undefined {
+  const accounts = readJSON<AccountV2[]>(ACCOUNTS_V2_KEY, []);
+  const idx = accounts.findIndex((a) => a.id === account.id);
+  if (idx === -1) return undefined;
+
+  const updated: AccountV2 = {
+    ...accounts[idx],
+    ...account,
+    id: accounts[idx].id,
+    createdAt: accounts[idx].createdAt,
+    ownerId: accounts[idx].ownerId,
+    updatedAt: new Date().toISOString(),
+  };
+
+  accounts[idx] = updated;
+  writeJSON(ACCOUNTS_V2_KEY, accounts);
+  return updated;
+}
+
+/**
  * Qué se llevaría por delante el borrado de una cuenta.
  *
  * Se expone aparte de deleteAccount para que la UI pueda avisar ANTES de borrar.

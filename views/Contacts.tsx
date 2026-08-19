@@ -18,8 +18,9 @@ import { ContactV2, AccountV2, ActivityV2, CRMUser } from '../types';
 import { CompleteFollowUpModal } from '../components/CompleteFollowUpModal';
 import { 
   User, Mail, Phone, MessageCircle, Briefcase, 
-  Plus, X, Search, Trash2, Building2, Calendar, Video, Clock, StickyNote, CheckCircle2
+  Plus, X, Search, Trash2, Building2, Calendar, Video, Clock, StickyNote, CheckCircle2, Mic
 } from 'lucide-react';
+import { AliasEditor } from '../components/AliasEditor';
 
 const ACTIVITY_FILTERS = [
   "Todos", "IA", "Nota", "Seguimiento", "Tarea interna", "Llamada", "Correo", "Reunión", "Videollamada", "Visita", "WhatsApp"
@@ -759,6 +760,23 @@ export default function Contacts({ activeUser }: { activeUser?: CRMUser }) {
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Historial</p>
                     <p className="text-sm font-black text-slate-900 truncate">{contactActivities.length} registros</p>
                   </div>
+                </div>
+
+                {/* Punto 4: alias de voz para que el asistente de cotización
+                    reconozca a este contacto cuando se dicta por su apodo. */}
+                <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+                  <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.22em] mb-6 flex items-center gap-2">
+                    <Mic size={14} /> Reconocimiento por voz
+                  </p>
+                  <AliasEditor
+                    kind="contacto"
+                    entityName={selectedContactData.fullName}
+                    value={selectedContactData.aliases}
+                    onChange={(aliases) => {
+                      updateContact({ ...selectedContactData, aliases });
+                      setRefresh((r) => r + 1);
+                    }}
+                  />
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">

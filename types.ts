@@ -139,6 +139,17 @@ export type AccountV2 = {
   direccion: string;
   createdAt: string;
   updatedAt?: string;
+  /**
+   * Alias de voz para el asistente de cotización.
+   *
+   * El reconocimiento de voz transcribe mal los nombres poco frecuentes o
+   * escritos con siglas: "H.I.P.I.C.O. S.A.S." se dicta "hipico". Guardando
+   * "hipico" como alias, el parser empareja la empresa correcta.
+   *
+   * Opcional: los registros anteriores a este campo simplemente no lo tienen
+   * y se leen como lista vacía.
+   */
+  aliases?: string[];
 };
 
 export type ContactV2 = {
@@ -153,6 +164,8 @@ export type ContactV2 = {
   createdAt: string;
   updatedAt?: string;
   name?: string; // legado: registros antiguos usaban "name" en lugar de "fullName"
+  /** Alias de voz para el asistente de cotización. Ver AccountV2.aliases. */
+  aliases?: string[];
 };
 
 // ✅ CAMBIO SOLICITADO: "Contactado" ahora es la primera etapa

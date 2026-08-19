@@ -8,7 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test:rut": "node --experimental-strip-types services/rutNit.test.ts"
+    "test:rut": "node --experimental-strip-types services/rutNit.test.ts",
+    "test:quotes": "node --experimental-strip-types services/quoteParser.test.ts",
+    "test:draft": "node --experimental-strip-types services/quoteDraft.test.ts",
+    "test": "npm run test:rut && npm run test:quotes && npm run test:draft"
   },
   "dependencies": {
     "@dnd-kit/core": "6.1.0",

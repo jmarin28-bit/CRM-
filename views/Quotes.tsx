@@ -37,8 +37,25 @@ import {
 } from '../services/storage';
 import { toLocalDateKey, todayLocal, calendarPartsOf, currentPeriod, periodBounds, periodOptions } from '../services/dates';
 import {
-  Plus, Trash2, X, List, ShieldCheck, StickyNote, Building2, Mic
+  parseQuoteHeader,
+  cleanItemDescription,
+  reviewParsedItem,
+  hasPendingReview,
+  type HeaderNames,
+  type ItemReview,
+  type ItemReviewField
+} from '../services/quoteParser';
+import {
+  buildQuotePayload,
+  missingReferenceLabel
+} from '../services/quoteDraft';
+import {
+  Plus, Trash2, X, List, ShieldCheck, StickyNote, Building2, Mic, AlertTriangle
 } from 'lucide-react';
+
+/** Clases para un campo que el parser leyó con dudas (punto 6). */
+const REVIEW_INPUT_CLASS =
+  "border-amber-400 bg-amber-50 ring-1 ring-amber-300 focus:border-amber-500";
 
 const formatMoneyByCurrency = (amount: number, currency: QuoteCurrency = "COP") => {
   return new Intl.NumberFormat("es-CO", {
@@ -59,14 +76,6 @@ const normalizeText = (value: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-
-const buildInitials = (value: string) => {
-  return normalizeText(value)
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("");
-};
 
 const numberWordsToDigits = (text: string) => {
   const map: Record<string, string> = {
@@ -745,68 +754,6 @@ const detectProductDescriptionFromPrompt = (text: string) => {
   return found;
 };
 
-const findAccountFromPrompt = (text: string, accounts: AccountV2[]) => {
-  const t = normalizeText(text);
-
-  const explicitSegment =
-    text.match(/(?:cotizacion|cotización)\s+(?:para|a nombre de|a)\s+([^,.\n]+)/i)?.[1] ||
-    text.match(/(?:cliente|empresa|cuenta)\s*[:\-]?\s*([^,.\n]+)/i)?.[1] ||
-    "";
-
-  const explicit = normalizeText(explicitSegment);
-
-  const ignoredWords = ["sas", "s.a.s", "ltda", "sa", "s.a", "empresa", "grupo"];
-
-  let bestMatch: AccountV2 | undefined;
-  let bestScore = 0;
-
-  accounts.forEach((a) => {
-    const commercial = normalizeText(a.nombreComercial || "");
-    const legal = normalizeText(a.razonSocial || "");
-    const initialsCommercial = buildInitials(a.nombreComercial || "");
-    const initialsLegal = buildInitials(a.razonSocial || "");
-
-    const candidates = [
-      commercial,
-      legal,
-      initialsCommercial,
-      initialsLegal
-    ].filter(Boolean);
-
-    candidates.forEach((candidate) => {
-      const words = candidate
-        .split(" ")
-        .filter((word) => word.length > 2 && !ignoredWords.includes(word));
-
-      let score = 0;
-
-      if (explicit && candidate && explicit.includes(candidate)) {
-        score = candidate.length + 500;
-      } else if (candidate && t.includes(candidate)) {
-        score = candidate.length + 300;
-      } else {
-        const matchedWords = words.filter((word) => t.includes(word));
-        score = matchedWords.length * 40;
-
-        const firstWord = words[0];
-        if (firstWord && explicit.includes(firstWord)) score += 120;
-        if (firstWord && t.includes(firstWord)) score += 80;
-      }
-
-      if (candidate && explicit.startsWith(candidate)) {
-        score += 120;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = a;
-      }
-    });
-  });
-
-  return bestScore >= 40 ? bestMatch : undefined;
-};
-
 const getContactDisplayName = (contact: any) => {
   return (
     contact.fullName ||
@@ -875,144 +822,6 @@ const stripNamesFromDescription = (
   cleaned = cleaned.replace(/\s+/g, " ").trim();
 
   return cleaned;
-};
-
-const findContactFromPromptLoose = (
-  text: string,
-  contacts: ContactV2[],
-  allAccounts?: AccountV2[]
-) => {
-  const t = normalizeText(text);
-  if (!t) return undefined;
-
-  console.log("[FINDCONTACT DEBUG] Input text:", text, "normalized:", t);
-  console.log("[FINDCONTACT DEBUG] Available contacts:", contacts.map(c => ({name: getContactDisplayName(c), id: c.id})));
-
-  // Estrategia 1: si el texto tiene 3+ palabras, probablemente sea "Nombre Apellido Empresa"
-  // Extraer solo las 2-3 primeras palabras como nombre de persona
-  const words = t.split(" ").filter((w) => w.length > 2);
-  let searchName = t;
-
-  // Detect if extra words after name could be a company hint
-  let companyHint = "";
-  if (words.length > 2) {
-    // Tomar las 2 primeras palabras (nombre + apellido típicamente)
-    searchName = words.slice(0, 2).join(" ");
-    // Words beyond the first 2 could be a company name hint
-    companyHint = words.slice(2).join(" ");
-  }
-
-  console.log("[FINDCONTACT DEBUG] Search name:", searchName, "Company hint:", companyHint);
-
-  let bestMatch: ContactV2 | undefined;
-  let bestScore = 0;
-
-  contacts.forEach((c: any) => {
-    const name = normalizeText(getContactDisplayName(c));
-    if (!name) return;
-
-    const nameWords = name.split(" ").filter((word: string) => word.length > 2);
-
-    let score = 0;
-
-    // Match exacto
-    if (searchName === name) {
-      score = name.length + 600;
-    }
-    // searchName está completamente dentro del nombre del contacto
-    else if (name.includes(searchName)) {
-      score = searchName.length + 400;
-    }
-    // El nombre del contacto está dentro de searchName
-    else if (searchName.includes(name)) {
-      score = name.length + 350;
-    }
-    // Buscar palabras individuales coincidentes
-    else {
-      const searchWords = searchName.split(" ");
-      const matchedWords = searchWords.filter((w: string) => nameWords.some((nw) => nw === w || nw.startsWith(w)));
-      score = matchedWords.length * 50;
-
-      // Bonus si las primeras palabras coinciden
-      if (nameWords[0] && searchWords[0] === nameWords[0]) score += 100;
-      if (nameWords[1] && searchWords[1] === nameWords[1]) score += 80;
-    }
-
-    // Company hint disambiguation: if there is a company hint and this contact
-    // belongs to an account whose name matches the hint, boost the score significantly
-    if (companyHint && allAccounts && c.accountId) {
-      const contactAccount = allAccounts.find((a) => a.id === c.accountId);
-      if (contactAccount) {
-        const acctName = normalizeText(
-          contactAccount.nombreComercial || contactAccount.razonSocial || ""
-        );
-        const hintWords = companyHint.split(" ").filter((w) => w.length > 2);
-        const matchedHintWords = hintWords.filter((hw) => acctName.includes(hw));
-        if (matchedHintWords.length > 0) {
-          score += 500;
-        }
-      }
-    }
-
-    console.log(`[FINDCONTACT DEBUG] Contact "${getContactDisplayName(c)}" (${name}): score ${score}`);
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = c;
-    }
-  });
-
-  console.log("[FINDCONTACT DEBUG] Best match:", bestMatch ? getContactDisplayName(bestMatch) : "NONE", "score:", bestScore);
-  return bestScore >= 30 ? bestMatch : undefined;
-};
-
-const findContactFromPrompt = (
-  text: string,
-  contacts: ContactV2[],
-  accountId?: string
-) => {
-  const t = normalizeText(text);
-
-  const explicitSegment =
-    text.match(/(?:contacto|atencion|atención|dirigido a)\s*[:\-]?\s*([^,.\n]+)/i)?.[1] ||
-    text.match(/(?:para|a nombre de|a)\s+([^,.\n]+?)\s+(?:de|del)\s+/i)?.[1] ||
-    "";
-
-  const explicit = normalizeText(explicitSegment);
-
-  const candidates = accountId
-    ? contacts.filter((c) => c.accountId === accountId)
-    : contacts;
-
-  let bestMatch: ContactV2 | undefined;
-  let bestScore = 0;
-
-  candidates.forEach((c: any) => {
-    const name = normalizeText(getContactDisplayName(c));
-    const nameWords = name.split(" ").filter((word) => word.length > 2);
-
-    let score = 0;
-
-    if (explicit && name && explicit.includes(name)) {
-      score = name.length + 500;
-    } else if (name && t.includes(name)) {
-      score = name.length + 300;
-    } else {
-      const matchedWords = nameWords.filter((word) => t.includes(word));
-      score = matchedWords.length * 35;
-
-      const firstName = nameWords[0];
-      if (firstName && explicit.includes(firstName)) score += 80;
-      if (firstName && t.includes(firstName)) score += 60;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = c;
-    }
-  });
-
-  return bestScore >= 35 ? bestMatch : undefined;
 };
 
 // ==========================================
@@ -1278,6 +1087,60 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
+  // Avisos que exigen revisión humana: empresa o contacto no encontrados,
+  // coincidencia parcial, moneda mezclada. Se muestran en ámbar, separados del
+  // mensaje verde de "borrador generado", para que no pasen desapercibidos.
+  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
+
+  /**
+   * Campos que el parser leyó con dudas, por id de ítem (punto 6).
+   *
+   * Se llena solo cuando el borrador viene del asistente. Un ítem escrito a
+   * mano no se marca: el asesor ya lo está viendo mientras lo teclea.
+   *
+   * La marca se retira cuando el asesor edita ese campo o pulsa "Ok" en la
+   * línea. Mientras quede alguna, el guardado se detiene y pregunta.
+   */
+  const [itemReviews, setItemReviews] = useState<Record<string, ItemReview>>({});
+
+  /** Retira la marca de un campo concreto (o de toda la línea si no se indica). */
+  const clearItemReview = (itemId: string, field?: ItemReviewField) => {
+    setItemReviews((prev) => {
+      const current = prev[itemId];
+      if (!current || current.fields.length === 0) return prev;
+
+      if (!field) {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      }
+
+      const at = current.fields.indexOf(field);
+      if (at === -1) return prev;
+
+      const fields = current.fields.filter((_, idx) => idx !== at);
+      const reasons = current.reasons.filter((_, idx) => idx !== at);
+      const next = { ...prev };
+      if (fields.length === 0) delete next[itemId];
+      else next[itemId] = { fields, reasons };
+      return next;
+    });
+  };
+
+  /** Motivo asociado a un campo marcado, para el tooltip. */
+  const reviewReason = (
+    review: ItemReview | undefined,
+    field: ItemReviewField
+  ): string => {
+    if (!review) return "";
+    const at = review.fields.indexOf(field);
+    return at === -1 ? "" : review.reasons[at];
+  };
+
+  const isFlagged = (
+    review: ItemReview | undefined,
+    field: ItemReviewField
+  ): boolean => !!review && review.fields.includes(field);
   const [aiExpanded, setAiExpanded] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [listeningStatus, setListeningStatus] = useState<'preparando' | 'hablando' | ''>('');
@@ -1410,73 +1273,30 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
           .filter(Boolean)
           .filter(isValidParsedItem) as QuoteItem[];
 
-        // 1. Intentar encontrar la empresa directamente por nombre
-        let account = clientName
-          ? findAccountFromPrompt(clientName, activeAccounts)
-          : undefined;
+        // Empresa y contacto: se buscan en el CRM a partir de las etiquetas
+        // "cliente:" y "contacto:". Si no aparecen, los campos quedan VACÍOS y
+        // el asesor recibe un aviso. Antes se fabricaba una cuenta temporal
+        // con NIT "PENDIENTE" que no existe en el CRM, lo que dejaba la
+        // cotización atribuida a una empresa inventada.
+        const headerParse = parseQuoteHeader(
+          [
+            clientName ? `cliente: ${clientName}` : "",
+            contactName ? `contacto: ${contactName}` : ""
+          ].filter(Boolean).join("\n"),
+          activeAccounts,
+          activeContacts
+        );
 
-        // 2. Intentar encontrar el contacto por nombre
-        let contact = contactName
-          ? findContactFromPromptLoose(contactName, activeContacts, activeAccounts)
-          : clientName
-            ? findContactFromPromptLoose(clientName, activeContacts, activeAccounts)
-            : undefined;
+        let account = headerParse.account.match;
+        let contact = headerParse.contact.match;
 
-        // 3. Si encontramos contacto pero no empresa, deducir la empresa del contacto
+        // Si el contacto es confiable pero la empresa no se encontró, la
+        // empresa del contacto es una deducción razonable.
         if (!account && contact?.accountId) {
           account = activeAccounts.find((a) => a.id === contact!.accountId);
         }
 
-        // 4. Si tenemos empresa pero no contacto, buscar contacto asociado a esa empresa
-        if (account && !contact) {
-          contact = findContactFromPrompt(clientName || prompt, activeContacts, account.id);
-          if (!contact) {
-            const accContacts = activeContacts.filter(c => c.accountId === account!.id);
-            if (accContacts.length > 0) {
-              contact = accContacts[0];
-            }
-          }
-        }
-
-        // Si no encontramos contacto ni empresa pero tenemos clientName, crear datos temporales
-        if (!account && !contact && clientName) {
-          console.log("[QUOTES DEBUG] Creating fallback account/contact for:", clientName);
-          
-          // Extraer nombre de persona (primeras 2-3 palabras)
-          const words = clientName.split(" ").filter(w => w.length > 2);
-          const personName = words.slice(0, 2).join(" ");
-          const companyName = words.slice(2).join(" ") || "Empresa pendiente";
-          
-          // Crear empresa temporal
-          account = {
-            id: "temp_" + Date.now(),
-            ownerId: "",
-            nombreComercial: companyName,
-            razonSocial: companyName.toUpperCase(),
-            nit: "PENDIENTE",
-            ciudad: "Ciudad pendiente",
-            direccion: "",
-            sector: "Otros" as any,
-            clasificacion: "A" as any,
-            createdAt: new Date().toISOString()
-          };
-          
-          // Crear contacto temporal
-          contact = {
-            id: "temp_contact_" + Date.now(),
-            ownerId: "",
-            accountId: account.id,
-            fullName: personName,
-            role: "Contacto pendiente",
-            email: "pendiente@empresa.com",
-            phone: "0000000000",
-            whatsapp: "0000000000",
-            createdAt: new Date().toISOString()
-          };
-          
-          console.log("[QUOTES DEBUG] Created temporary account:", account.nombreComercial);
-          console.log("[QUOTES DEBUG] Created temporary contact:", contact.fullName);
-        }
+        const warnings = [...headerParse.warnings];
 
         const detectedType = detectQuoteTypeFromPrompt(prompt);
 
@@ -1514,10 +1334,21 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
         const accountName = account?.nombreComercial || account?.razonSocial || "No detectada";
         const displayContactName = contact ? getContactDisplayName(contact as any) : "No detectado";
 
+        // Moneda mixta: se evalúa sobre el prompt completo, no solo la línea
+        // "moneda:", porque los ítems pueden traer su propia unidad.
+        const currencyScan = parseQuoteHeader(prompt, [], []).currency;
+        if (currencyScan.mixed) {
+          warnings.push(
+            `El texto menciona ${currencyScan.currencies.join(" y ")}. Se aplicó ${detectedCurrency} a todos los ítems: confirma la moneda antes de guardar.`
+          );
+        }
+
+        setAiWarnings(warnings);
         setAiMessage(
-          account
-            ? `Borrador generado (formato Director). Cuenta: ${accountName}. Contacto: ${displayContactName}. Verifica y guarda para vincular la oportunidad al embudo.`
-            : `Borrador generado sin empresa confiable. Cliente indicado: "${clientName}". Selecciónala manualmente.`
+          `Borrador generado (formato Director). Cuenta: ${accountName}. Contacto: ${displayContactName}.` +
+            (warnings.length === 0
+              ? " Verifica y guarda para vincular la oportunidad al embudo."
+              : "")
         );
 
         setAiLoading(false);
@@ -1526,32 +1357,34 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
       }
 
       // ============================================================
-      // FORMATO NATURAL / LIBRE (parser original — NO SE TOCA)
+      // FORMATO NATURAL / LIBRE (texto dictado o pegado)
       // ============================================================
-      let account = findAccountFromPrompt(prompt, accounts);
-      let contact = findContactFromPrompt(prompt, allContacts, account?.id);
+      // El encabezado —todo lo anterior al primer "código"— se lee aparte:
+      // ahí van la empresa, el contacto y la moneda. Ver services/quoteParser.ts
+      // para el detalle del emparejamiento y por qué es deliberadamente
+      // conservador (un cliente equivocado se guarda sin que nadie lo note).
+      const headerParse = parseQuoteHeader(prompt, activeAccounts, activeContacts);
+      const headerNames: HeaderNames = headerParse;
+      const warnings = [...headerParse.warnings];
 
+      let account = headerParse.account.match;
+      let contact = headerParse.contact.match;
+
+      // Contacto confiable sin empresa: la empresa del contacto es la mejor
+      // deducción disponible.
       if (!account && contact?.accountId) {
-        account = accounts.find((a) => a.id === contact.accountId);
+        account = activeAccounts.find((a) => a.id === contact!.accountId);
       }
 
+      // Contacto de otra empresa: se descarta. Antes se sustituía por el
+      // primer contacto de la cuenta, que es como no buscar en absoluto.
       if (account && contact && contact.accountId !== account.id) {
         contact = undefined;
       }
 
-      if (account && !contact) {
-        contact = findContactFromPrompt(prompt, allContacts, account.id);
-        if (!contact) {
-          const accContacts = allContacts.filter(c => c.accountId === account!.id);
-          if (accContacts.length > 0) {
-            contact = accContacts[0];
-          }
-        }
-      }
-
       const accountNameStr = account ? (account.nombreComercial || account.razonSocial) : undefined;
       const detectedType = detectQuoteTypeFromPrompt(prompt, accountNameStr);
-      const detectedCurrency = detectCurrencyFromPrompt(prompt);
+      const detectedCurrency = headerParse.currency.currency;
       const detectedPayment = detectPaymentTermsFromPrompt(prompt);
       const detectedValidity = detectValidityFromPrompt(prompt);
 
@@ -1572,6 +1405,10 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
 
       const itemBlocks = splitItemsFromPrompt(prompt);
 
+      // Texto original de cada ítem, para poder contrastar después lo que el
+      // parser entendió contra lo que se dictó realmente (punto 6).
+      const blockByItemId: Record<string, string> = {};
+
       const items: QuoteItem[] = itemBlocks
         .map((block) => {
           const qty = extractQuantity(block);
@@ -1581,22 +1418,33 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
           const itemDescription = extractDescription(block, account, contact);
           const productFallback = detectProductDescriptionFromPrompt(block);
 
+          // Dos limpiezas: la primera quita los nombres de la empresa y el
+          // contacto EMPAREJADOS en el CRM; la segunda quita los nombres tal
+          // como se LEYERON del texto. Hacen falta las dos, porque si la
+          // empresa dictada no existe en el CRM no hay registro del que sacar
+          // el nombre, y "prueba sas juan perez" acabaría como descripción.
           const finalDescription =
-            stripNamesFromDescription(
-              itemDescription
-                .replace(/^(para|a)\s+/i, "")
-                .trim(),
-              account,
-              contact,
-              block
+            cleanItemDescription(
+              stripNamesFromDescription(
+                itemDescription
+                  .replace(/^(para|a)\s+/i, "")
+                  .trim(),
+                account,
+                contact,
+                block
+              ),
+              headerNames
             ) ||
             productFallback ||
             (isService ? "Servicio por definir" : "Producto por definir");
 
           const { itemType, unit } = detectItemTypeAndUnit(finalDescription, detectedType);
 
+          const id = crypto.randomUUID();
+          blockByItemId[id] = block;
+
           return {
-            id: crypto.randomUUID(),
+            id,
             itemType,
             code: itemCode || "",
             description: finalDescription,
@@ -1611,8 +1459,10 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
         .filter(isValidParsedItem);
 
       if (items.length === 0) {
+        const id = crypto.randomUUID();
+        blockByItemId[id] = prompt;
         items.push({
-          id: crypto.randomUUID(),
+          id,
           itemType: isService ? "servicio" : "producto",
           code: "",
           description: isService ? "Servicio por definir" : "Producto por definir",
@@ -1625,9 +1475,20 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
         });
       }
 
-      if (!account) {
-        setAiMessage("No se detectó una empresa válida. Selecciónala manualmente antes de guardar.");
+      // Punto 6: contrastar cada línea con el texto que la originó y marcar
+      // lo que quedó en duda, para que el asesor lo confirme antes de guardar
+      // en vez de que se guarde en silencio como si fuera correcto.
+      const reviews: Record<string, ItemReview> = {};
+      for (const item of items) {
+        const review = reviewParsedItem(blockByItemId[item.id] || "", {
+          code: item.code,
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice
+        });
+        if (review.fields.length > 0) reviews[item.id] = review;
       }
+      setItemReviews(reviews);
 
       setDraft((prev) => ({
         ...prev,
@@ -1646,13 +1507,26 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
       const accountName = account?.nombreComercial || account?.razonSocial || "No detectada";
       const contactName = contact ? getContactDisplayName(contact as any) : "No detectado";
 
+      const flaggedCount = Object.keys(reviews).length;
+      if (flaggedCount > 0) {
+        warnings.push(
+          flaggedCount === 1
+            ? "1 línea quedó marcada para revisar. Confírmala antes de guardar."
+            : `${flaggedCount} líneas quedaron marcadas para revisar. Confírmalas antes de guardar.`
+        );
+      }
+
+      setAiWarnings(warnings);
       setAiMessage(
-        account
-          ? `Borrador generado. Cuenta: ${accountName}. Contacto: ${contactName}. Verifica y guarda para vincular la oportunidad al embudo.`
-          : `Borrador generado sin empresa confiable. Selecciónala manualmente antes de guardar.`
+        `Borrador generado. Cuenta: ${accountName}. Contacto: ${contactName}.` +
+          (warnings.length === 0
+            ? " Verifica y guarda para vincular la oportunidad al embudo."
+            : "")
       );
     } catch (error) {
       console.error(error);
+      setAiWarnings([]);
+      setItemReviews({});
       setAiMessage("Error al procesar la cotización con IA.");
     } finally {
       setAiLoading(false);
@@ -2622,6 +2496,8 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
     setAiPrompt("");
     setAiLoading(false);
     setAiMessage("");
+    setAiWarnings([]);
+    setItemReviews({});
     setAiExpanded(false);
   };
 
@@ -2629,6 +2505,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
     setDraft(getEmptyQuoteDraft("producto"));
     setApplyTax(true);
     setActiveTab("general");
+    setItemReviews({});
   };
 
   const handleAddItem = () => {
@@ -2649,7 +2526,27 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
     setDraft({ ...draft, items: [...(draft.items || []), newItem] });
   };
 
+  /** Qué marca de revisión corresponde a cada campo editable del ítem. */
+  const REVIEW_FIELD_OF: Partial<Record<keyof QuoteItem, ItemReviewField>> = {
+    code: "codigo",
+    description: "descripcion",
+    quantity: "cantidad",
+    unitPrice: "valor",
+  };
+
   const handleItemChange = (id: string, fieldOrUpdates: keyof QuoteItem | Partial<QuoteItem>, value?: any) => {
+    // Editar un campo marcado ES la confirmación humana que pedíamos: el
+    // asesor ya lo miró y lo corrigió, así que la marca sobra.
+    const touched: (keyof QuoteItem)[] =
+      typeof fieldOrUpdates === "object" && fieldOrUpdates !== null
+        ? (Object.keys(fieldOrUpdates) as (keyof QuoteItem)[])
+        : [fieldOrUpdates as keyof QuoteItem];
+
+    for (const key of touched) {
+      const reviewField = REVIEW_FIELD_OF[key];
+      if (reviewField) clearItemReview(id, reviewField);
+    }
+
     setDraft((prev) => {
       const items = [...(prev.items || [])];
       const idx = items.findIndex((i) => i.id === id);
@@ -2681,6 +2578,28 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
 
     if (missing.length > 0) {
       alert(`Faltan campos obligatorios:\n- ${missing.join("\n- ")}`);
+      return;
+    }
+
+    // Punto 6: no se guarda mientras haya líneas que el parser leyó con dudas.
+    // La regla del CRM ya era "no guarda automáticamente, exige validación
+    // humana"; esto la hace cumplir en la interfaz en vez de confiar en que
+    // el asesor se dé cuenta solo.
+    if (hasPendingReview(itemReviews)) {
+      const pendientes = (draft.items || [])
+        .map((item, index) => ({ item, index, review: itemReviews[item.id] }))
+        .filter((row) => row.review && row.review.fields.length > 0)
+        .map(
+          (row) =>
+            `Línea ${row.index + 1} (${row.item.description || "sin descripción"}): ${row.review!.reasons.join(" ")}`
+        );
+
+      alert(
+        "Hay líneas marcadas para revisar:\n\n" +
+          pendientes.join("\n\n") +
+          "\n\nCorrige el campo o pulsa «Ok» en la línea para confirmar que está bien."
+      );
+      setActiveTab("items");
       return;
     }
 
@@ -2765,25 +2684,15 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
       }
     }
 
-    const quoteData = {
-      id: quoteId,
-      type: draft.type || 'producto',
-      status: draft.status || 'borrador',
-      accountId: draft.accountId!,
-      contactId: draft.contactId,
-      opportunityId: finalOpportunityId || undefined,
-      currency: draft.currency || "COP",
-      issueDate: draft.issueDate || todayLocal(),
-      validUntil: draft.validUntil || todayLocal(),
-      items: draft.items as any,
-      terms: draft.terms as any,
-      notes: draft.notes as any,
-      subtotal: totals.subtotal,
-      tax: totals.tax,
-      total: totals.total,
-      deliveryAddress: draft.deliveryAddress,
-      deliveryCity: draft.deliveryCity,
-    };
+    // Punto 5: un único constructor del payload para las dos ramas (crear y
+    // actualizar), de modo que no puedan divergir. Ver services/quoteDraft.ts.
+    const quoteData = buildQuotePayload({
+      draft,
+      quoteId,
+      opportunityId: finalOpportunityId,
+      totals,
+      today: todayLocal(),
+    });
 
     if (draft.id) {
       updateQuote({
@@ -2791,7 +2700,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
         ...quoteData,
       } as QuoteV2);
     } else {
-      createQuote(quoteData);
+      createQuote(quoteData as any);
     }
 
     resetAIQuoteHelper();
@@ -3712,6 +3621,11 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                 setDraft(q);
                 setApplyTax(q.tax > 0);
                 setActiveTab("general");
+                // Una cotización guardada no arrastra marcas de revisión del
+                // asistente: lo que se ve es lo que un humano ya validó.
+                setItemReviews({});
+                setAiWarnings([]);
+                setAiMessage("");
                 setShowModal(true);
               }}
               className="bg-white border border-slate-200 p-7 rounded-[28px] shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all group cursor-pointer"
@@ -3954,6 +3868,16 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                           }}
                         >
                           <option value="">Seleccionar empresa...</option>
+                          {/* Punto 5: si la empresa guardada ya no está en la
+                              lista (se reasignó de dueño o se borró), el select
+                              se pintaría vacío y parecería que la cotización no
+                              tiene cliente. Se muestra la referencia. */}
+                          {draft.accountId &&
+                            !accounts.some(a => a.id === draft.accountId) && (
+                              <option value={draft.accountId}>
+                                {missingReferenceLabel("empresa", draft.accountId)}
+                              </option>
+                            )}
                           {accounts.map(a => (
                             <option key={a.id} value={a.id}>
                               {a.nombreComercial || a.razonSocial}
@@ -3970,6 +3894,18 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                           onChange={e => setDraft({ ...draft, contactId: e.target.value })}
                         >
                           <option value="">Seleccionar contacto...</option>
+                          {/* Mismo caso que la empresa: el contacto guardado
+                              puede haberse borrado o movido de cuenta. */}
+                          {draft.contactId &&
+                            !allContacts.some(
+                              c =>
+                                c.id === draft.contactId &&
+                                c.accountId === draft.accountId
+                            ) && (
+                              <option value={draft.contactId}>
+                                {missingReferenceLabel("contacto", draft.contactId)}
+                              </option>
+                            )}
                           {draft.accountId &&
                             allContacts
                               .filter(c => c.accountId === draft.accountId)
@@ -4035,6 +3971,23 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                               ? "Selecciona primero una empresa..."
                               : "🆕 Se creará nueva oportunidad al guardar"}
                           </option>
+
+                          {/* Punto 5: sin esta opción de respaldo, una
+                              cotización con oportunidad vinculada que ya no
+                              aparece en la lista se mostraba como "se creará
+                              nueva oportunidad al guardar" — justo lo
+                              contrario de lo que está guardado. */}
+                          {draft.opportunityId &&
+                            !accountOpportunities.some(
+                              (opp) => opp.id === draft.opportunityId
+                            ) && (
+                              <option value={draft.opportunityId}>
+                                {missingReferenceLabel(
+                                  "oportunidad",
+                                  draft.opportunityId
+                                )}
+                              </option>
+                            )}
 
                           {accountOpportunities.map((opp) => (
                             <option key={opp.id} value={opp.id}>
@@ -4108,18 +4061,34 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                               <th className="px-6 py-4 text-center w-[100px]">Cant.</th>
                               <th className="px-6 py-4 text-right w-[140px]">V. Unitario</th>
                               <th className="px-6 py-4 text-right w-[140px]">Subtotal</th>
+                              <th className="px-4 py-4 text-center w-[90px]">Revisar</th>
                               <th className="px-6 py-4 w-[50px]"></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {(draft.items || []).map((i, index) => (
-                              <tr key={i.id} className="border-b border-slate-100 hover:bg-slate-50">
+                            {(draft.items || []).map((i, index) => {
+                              const review = itemReviews[i.id];
+                              const needsReview = !!review && review.fields.length > 0;
+                              return (
+                              <tr
+                                key={i.id}
+                                className={`border-b border-slate-100 ${
+                                  needsReview
+                                    ? "bg-amber-50/70 hover:bg-amber-50"
+                                    : "hover:bg-slate-50"
+                                }`}
+                              >
                                 <td className="px-4 py-4 text-center text-xs font-black text-slate-500">
                                   {index + 1}
                                 </td>
                                 <td className="p-2">
                                   <input
-                                    className="w-full border border-transparent hover:border-slate-200 focus:border-blue-500 rounded p-2 text-xs font-mono outline-none"
+                                    className={`w-full border rounded p-2 text-xs font-mono outline-none ${
+                                      isFlagged(review, "codigo")
+                                        ? REVIEW_INPUT_CLASS
+                                        : "border-transparent hover:border-slate-200 focus:border-blue-500"
+                                    }`}
+                                    title={reviewReason(review, "codigo")}
                                     value={i.code || ''}
                                     placeholder="Ref..."
                                     onChange={e => handleItemChange(i.id, 'code', e.target.value)}
@@ -4127,7 +4096,12 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                                 </td>
                                 <td className="p-2">
                                   <input
-                                    className="w-full border border-transparent hover:border-slate-200 focus:border-blue-500 rounded p-2 text-xs outline-none"
+                                    className={`w-full border rounded p-2 text-xs outline-none ${
+                                      isFlagged(review, "descripcion")
+                                        ? REVIEW_INPUT_CLASS
+                                        : "border-transparent hover:border-slate-200 focus:border-blue-500"
+                                    }`}
+                                    title={reviewReason(review, "descripcion")}
                                     value={i.description}
                                     placeholder="Descripción..."
                                     onChange={(e) => {
@@ -4171,7 +4145,12 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                                     type="text"
                                     inputMode="decimal"
                                     pattern="[0-9.,]*"
-                                    className="w-full border border-transparent hover:border-slate-200 focus:border-blue-500 rounded p-2 text-xs text-center font-bold outline-none"
+                                    className={`w-full border rounded p-2 text-xs text-center font-bold outline-none ${
+                                      isFlagged(review, "cantidad")
+                                        ? REVIEW_INPUT_CLASS
+                                        : "border-transparent hover:border-slate-200 focus:border-blue-500"
+                                    }`}
+                                    title={reviewReason(review, "cantidad")}
                                     value={i.quantity ?? ''}
                                     onChange={e => handleItemChange(i.id, 'quantity', e.target.value)}
                                   />
@@ -4181,7 +4160,12 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                                     type="text"
                                     inputMode="decimal"
                                     pattern="[0-9.,]*"
-                                    className="w-full border border-transparent hover:border-slate-200 focus:border-blue-500 rounded p-2 text-xs text-right font-mono outline-none"
+                                    className={`w-full border rounded p-2 text-xs text-right font-mono outline-none ${
+                                      isFlagged(review, "valor")
+                                        ? REVIEW_INPUT_CLASS
+                                        : "border-transparent hover:border-slate-200 focus:border-blue-500"
+                                    }`}
+                                    title={reviewReason(review, "valor")}
                                     value={i.unitPrice ?? ''}
                                     onChange={e => handleItemChange(i.id, 'unitPrice', e.target.value)}
                                   />
@@ -4189,16 +4173,36 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
                                 <td className="px-6 py-4 text-right font-black text-slate-900 text-xs">
                                   {formatMoneyByCurrency(i.total, draft.currency)}
                                 </td>
+                                <td className="p-2 text-center align-middle">
+                                  {needsReview ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => clearItemReview(i.id)}
+                                      title={review!.reasons.join("\n")}
+                                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-black uppercase tracking-widest transition-colors"
+                                    >
+                                      <AlertTriangle size={12} />
+                                      Ok
+                                    </button>
+                                  ) : (
+                                    <span className="text-slate-200 text-xs">—</span>
+                                  )}
+                                </td>
                                 <td className="p-2 text-center">
                                   <button
-                                    onClick={() => setDraft({ ...draft, items: draft.items?.filter(x => x.id !== i.id) })}
+                                    type="button"
+                                    onClick={() => {
+                                      clearItemReview(i.id);
+                                      setDraft({ ...draft, items: draft.items?.filter(x => x.id !== i.id) });
+                                    }}
                                     className="text-slate-300 hover:text-red-500 p-2"
                                   >
                                     <Trash2 size={14} />
                                   </button>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -4448,8 +4452,33 @@ cotización para Ioncore, contacto Sandra Garcia, producto, USD
                     </button>
 
                     {aiMessage && (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-bold">
+                      <div
+                        className={`rounded-2xl border px-4 py-3 text-xs font-bold ${
+                          aiWarnings.length > 0
+                            ? "border-slate-200 bg-slate-50 text-slate-600"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
                         {aiMessage}
+                      </div>
+                    )}
+
+                    {aiWarnings.length > 0 && (
+                      <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-800">
+                          Revisa antes de guardar
+                        </div>
+                        <ul className="space-y-1.5">
+                          {aiWarnings.map((warning, i) => (
+                            <li
+                              key={i}
+                              className="text-xs text-amber-800 font-semibold leading-snug flex gap-2"
+                            >
+                              <span aria-hidden="true">•</span>
+                              <span>{warning}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
 
