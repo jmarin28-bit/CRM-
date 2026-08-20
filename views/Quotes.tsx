@@ -372,36 +372,41 @@ const extractQuantity = (text: string) => {
 
 const extractCode = (text: string) => {
   let cleaned = normalizeSpokenMoneyAndCodes(text)
-    .replace(/^\d+\)\s*/i, "")
+    .replace(/^\d+[\).]\s*/i, "")
     .trim();
 
-  // Intentar extraer código del patrón "codigo X"
+  // 1. Coincidencia explícita: "codigo X" donde X es un token alfanumérico que puede contener guiones, puntos, slashes
+  const explicitMatch = cleaned.match(
+    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n|ref(?:erencia)?)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*([a-zA-Z0-9._\-\/]+)/i
+  );
+
+  if (explicitMatch?.[1]) {
+    const code = explicitMatch[1].trim();
+    if (!RESERVED_ITEM_WORDS.has(normalizeText(code))) {
+      return code;
+    }
+  }
+
+  // 2. Dígitos espaciados hablados (ej: "código 1 4 5" dictado como "código uno cuatro cinco")
   const spokenDigitsMatch = cleaned.match(
-    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*((?:\d\s*){2,})/i
+    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n|ref(?:erencia)?)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*(\d(?:\s+\d)+)/i
   );
 
   if (spokenDigitsMatch?.[1]) {
     return spokenDigitsMatch[1].replace(/\s+/g, "").trim();
   }
 
-  const explicitMatch = cleaned.match(
-    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*([A-Za-z0-9._\-\/]+)/i
-  );
-
-  if (explicitMatch?.[1]) {
-    return explicitMatch[1].trim();
-  }
-
-  // Si aún no se encuentra, intentar extraer el primer token que contenga dígitos
-  const firstTokenMatch = cleaned.match(/^([\w.\-/]*\d[\w.\-/]*)\s+/);
+  // 3. Primer token de la línea si parece un código de catálogo (contiene dígitos o alfanumérico estructurado)
+  const firstTokenMatch = cleaned.match(/^([A-Za-z0-9._\-\/]*\d[A-Za-z0-9._\-\/]*|[A-Z0-9]{3,}[A-Za-z0-9._\-\/]*)\b/);
   if (firstTokenMatch?.[1]) {
-    return firstTokenMatch[1].trim();
-  }
-
-  // Último recurso: buscar cualquier número al inicio
-  const firstNumber = cleaned.match(/^(\d+)/);
-  if (firstNumber?.[1]) {
-    return firstNumber[1];
+    const candidate = firstTokenMatch[1].trim();
+    if (
+      candidate.length >= 2 &&
+      !RESERVED_ITEM_WORDS.has(normalizeText(candidate)) &&
+      !/^(?:item|linea|fila|cotizacion|cliente|contacto)$/i.test(candidate)
+    ) {
+      return candidate;
+    }
   }
 
   return "";
@@ -470,7 +475,9 @@ const parseLocalizedAmount = (rawValue: string) => {
 };
 
 const extractUnitPrice = (text: string, qty?: number, code?: string) => {
-  const cleaned = normalizeSpokenMoneyAndCodes(text);
+  let cleaned = normalizeSpokenMoneyAndCodes(text)
+    .replace(/^\d+[\).]\s*/i, "")
+    .trim();
 
   const match =
     cleaned.match(
@@ -484,11 +491,14 @@ const extractUnitPrice = (text: string, qty?: number, code?: string) => {
   }
 
   // Fallback inteligente: buscar otros números si no hay coincidencia explícita de precio
+  // Ignorar números que coincidan con la cantidad o sean parte del código
   const numbers = cleaned.match(/\b\d+(?:[.,]\d+)?\b/g);
   if (numbers && numbers.length > 0) {
     for (let i = numbers.length - 1; i >= 0; i--) {
       const val = parseLocalizedAmount(numbers[i]);
-      if (val > 0 && val !== qty && numbers[i] !== code) {
+      const isQty = qty !== undefined && val === qty;
+      const isCode = code ? (code === numbers[i] || code.includes(numbers[i])) : false;
+      if (val > 0 && !isQty && !isCode) {
         return val;
       }
     }
@@ -527,6 +537,8 @@ const isHeaderOrCurrencyLine = (line: string) => {
   if (!n) return true;
   if (/^cotizaci?on\b/.test(n)) return true;
   if (/^moneda\b/.test(n)) return true;
+  if (/^cliente\b/.test(n)) return true;
+  if (/^contacto\b/.test(n)) return true;
   return false;
 };
 
@@ -541,22 +553,23 @@ const codeFollowedByReservedWord = (line: string) => {
 
 // Verifica que un ítem tenga información mínima válida antes de agregarlo:
 // código que no sea palabra reservada y descripción real (no placeholder)
-// cuando no hay valor unitario.
+// cuando no hay valor unitario. No descarta ítems sin precio (se marcan para revisión).
 const isValidParsedItem = (item: QuoteItem) => {
   const code = (item.code || "").trim();
   const description = (item.description || "").trim();
   const quantity = item.quantity || 0;
-  const unitPrice = item.unitPrice || 0;
 
   // Validación:
-  // - cantidad mayor a 0
-  if (quantity <= 0) return false;
-  // - valor unitario mayor a 0
-  if (unitPrice <= 0) return false;
+  // - cantidad no puede ser negativa
+  if (quantity < 0) return false;
 
-  // - Si hay descripción, no puede ser solo "Producto por definir" o "Servicio por definir"
+  // - Debe tener al menos descripción real o código
   const descNorm = normalizeText(description);
-  if (description && (descNorm === "producto por definir" || descNorm === "servicio por definir")) return false;
+  const isPlaceholderDesc = !descNorm || descNorm === "producto por definir" || descNorm === "servicio por definir";
+
+  if (!code && isPlaceholderDesc) {
+    return false;
+  }
 
   // - Si hay código, no puede ser palabra reservada
   const codeNorm = normalizeText(code);
@@ -566,12 +579,27 @@ const isValidParsedItem = (item: QuoteItem) => {
 };
 
 const splitItemsFromPrompt = (text: string) => {
-  // Encontrar todas las ocurrencias de "codigo" o "código" o "cod" válidas.
-  // Un "codigo" es válido si no está seguido por una palabra reservada.
-  const regex = /\bc[oó]d(?:ig[oó])?\b\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*([a-zA-Z0-9._\-\/]+)/gi;
+  const raw = (text || "").trim();
+  if (!raw) return [];
+
+  // 1. Si el texto tiene líneas numeradas explícitas (ej: "1) ... 2) ... 3) ...")
+  const numberedMatches = [...raw.matchAll(/(?:^|\n)\s*(\d+)[\).]\s*/g)];
+  if (numberedMatches.length >= 2) {
+    const segments: string[] = [];
+    for (let i = 0; i < numberedMatches.length; i++) {
+      const start = numberedMatches[i].index! + (numberedMatches[i][0].startsWith("\n") ? 1 : 0);
+      const end = i + 1 < numberedMatches.length ? numberedMatches[i + 1].index! : raw.length;
+      const segment = raw.substring(start, end).trim();
+      if (segment) segments.push(segment);
+    }
+    return segments;
+  }
+
+  // 2. Encontrar todas las ocurrencias de "codigo", "código", "cod", "parte", "pn", "ref" válidas.
+  const regex = /\b(?:c[oó]d(?:ig[oó])?|parte|pn|p\/n|ref(?:erencia)?)\b\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*([a-zA-Z0-9._\-\/]+)/gi;
   const matches: { index: number; code: string }[] = [];
   let match;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(raw)) !== null) {
     const code = match[1];
     const codeNorm = normalizeText(code);
     if (!RESERVED_ITEM_WORDS.has(codeNorm)) {
@@ -579,22 +607,20 @@ const splitItemsFromPrompt = (text: string) => {
     }
   }
 
-  // Si hay al menos un código válido, hacemos split por estas posiciones.
-  if (matches.length > 0) {
+  if (matches.length > 1) {
     const segments: string[] = [];
     for (let i = 0; i < matches.length; i++) {
       const start = matches[i].index;
-      const end = i + 1 < matches.length ? matches[i + 1].index : text.length;
-      let segment = text.substring(start, end).trim();
-      // Remover números de línea del siguiente ítem al final (ej: "2)" , "3)", etc.)
-      segment = segment.replace(/\n\d+\)\s*$/, '').trim();
+      const end = i + 1 < matches.length ? matches[i + 1].index : raw.length;
+      let segment = raw.substring(start, end).trim();
+      segment = segment.replace(/\n\d+[\).]\s*$/, '').trim();
       segments.push(segment);
     }
     return segments;
   }
 
-  // Si no hay códigos válidos con el prefijo "codigo", hacemos el fallback original por líneas.
-  const lines = text
+  // 3. Fallback por líneas independientes
+  const lines = raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
@@ -602,8 +628,9 @@ const splitItemsFromPrompt = (text: string) => {
   const itemLines = lines.filter((line) => {
     if (isHeaderOrCurrencyLine(line)) return false;
     if (codeFollowedByReservedWord(line)) return false;
-    if (/^\d+\)/.test(line)) return true;
+    if (/^\d+[\).]\s*/.test(line)) return true;
     if (/^[A-Za-z0-9][A-Za-z0-9._\-\/]{2,}\s+.+/.test(line)) return true;
+    if (/\b(?:cantidad|cant|valor|precio|usd|cop)\b/i.test(line)) return true;
     return false;
   });
 
@@ -611,26 +638,31 @@ const splitItemsFromPrompt = (text: string) => {
     return itemLines;
   }
 
-  return [text.trim()];
+  return [raw];
 };
 
-const removeExplicitCodeFromDescription = (value: string) => {
-  return value.replace(
-    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*(?:\d+(?:\s+\d+)+|[A-Za-z0-9._\-\/]+)/ig,
+const removeExplicitCodeFromDescription = (value: string, code?: string) => {
+  let res = value.replace(
+    /(?:c[oó]digo|codigo|codig|cod|parte|pn|p\/n|ref(?:erencia)?)\s*(?:es|son|n[uú]mero)?\s*[:\-]?\s*(?:\d+(?:\s+\d+)+|[A-Za-z0-9._\-\/]+)/ig,
     ""
   );
+  if (code && code.length >= 2) {
+    res = res.replace(new RegExp(`\\b${escapeRegExp(code)}\\b`, "ig"), "");
+  }
+  return res;
 };
 
 const extractDescription = (
   text: string,
   account?: AccountV2,
-  contact?: ContactV2
+  contact?: ContactV2,
+  itemCode?: string
 ) => {
   let cleaned = normalizeSpokenMoneyAndCodes(text);
 
   cleaned = cleanKnownBusinessWords(cleaned);
 
-  cleaned = cleaned.replace(/^\d+\)\s*/i, "");
+  cleaned = cleaned.replace(/^\d+[\).]\s*/i, "");
 
   cleaned = cleaned.replace(/\b[ií]tem\s*\d+\b[,\s.:;-]*/ig, "");
 
@@ -661,15 +693,12 @@ const extractDescription = (
   cleaned = removeEntityFromDescription(cleaned, account?.razonSocial);
   cleaned = removeEntityFromDescription(cleaned, contact ? getContactDisplayName(contact) : "");
 
-  cleaned = removeExplicitCodeFromDescription(cleaned);
-
-  cleaned = cleaned.replace(/^([\w.\-/]*\d[\w.\-/]*)\s+/, "");
+  cleaned = removeExplicitCodeFromDescription(cleaned, itemCode);
 
   cleaned = cleaned.replace(/cantidad\s*[:\-]?\s*(?:us\$|usd|cop|\$)?\s*[\d.,]+/ig, "");
-  cleaned = cleaned.replace(/cantidad\s*[:\-]?\s*\d+/ig, "");
-  cleaned = cleaned.replace(/cant\s*[:\-]?\s*\d+/ig, "");
-  cleaned = cleaned.replace(/(?:propio|unidad|unidades|uds|und)\s*[:\-]?\s*\d+/ig, "");
-  cleaned = cleaned.replace(/\d+\s*(?:unidad|unidades|uds|und)/ig, "");
+  cleaned = cleaned.replace(/cant\s*[:\-]?\s*[\d.,]+/ig, "");
+  cleaned = cleaned.replace(/(?:propio|unidad|unidades|uds|und)\s*[:\-]?\s*[\d.,]+/ig, "");
+  cleaned = cleaned.replace(/[\d.,]+\s*(?:unidad|unidades|uds|und)/ig, "");
 
   cleaned = cleaned.replace(
     /(?:precio|valor|valor\s+unitario|v\.?\s*unitario|unitario)\s*(?:es|son)?\s*[:\-]?\s*(?:us\$|usd|cop|\$)?\s*[\d.,]+/ig,
@@ -708,13 +737,6 @@ const extractDescription = (
   cleaned = cleaned.replace(/^[,\s.:;-]+/g, "");
   cleaned = cleaned.replace(/[,\s.:;-]+$/g, "");
   cleaned = cleaned.replace(/,\s*/g, " ");
-  cleaned = cleaned.replace(/\s+/g, " ").trim();
-
-  const productOnly = keepOnlyProductDescription(cleaned);
-
-  cleaned = productOnly || cleaned;
-
-  cleaned = cleanKnownBusinessWords(cleaned);
   cleaned = cleaned.replace(/\s+/g, " ").trim();
 
   return cleaned || "";
@@ -1415,7 +1437,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
           const itemCode = extractCode(block);
           const itemPrice = extractUnitPrice(block, qty, itemCode);
 
-          const itemDescription = extractDescription(block, account, contact);
+          const itemDescription = extractDescription(block, account, contact, itemCode);
           const productFallback = detectProductDescriptionFromPrompt(block);
 
           // Dos limpiezas: la primera quita los nombres de la empresa y el

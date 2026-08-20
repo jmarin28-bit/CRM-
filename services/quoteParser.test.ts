@@ -495,6 +495,27 @@ console.log("\n12. Revisión por ítem");
   });
   check("separadores de miles no generan falsa alarma", miles.fields, []);
 
+  // Códigos compuestos con guiones no deben generar falsas alarmas de cifras sobrantes
+  const codigoCompuesto = reviewParsedItem("4) código 4450-5060 gases cantidad 1 valor 50", {
+    code: "4450-5060",
+    description: "gases",
+    quantity: 1,
+    unitPrice: 50,
+  });
+  check("código compuesto con guión 4450-5060 no genera falsa alarma", codigoCompuesto.fields, []);
+
+  // Ítems de catálogo con números en la descripción técnica (ej: dimensiones, tamaños, 5/pk)
+  const itemCatalogo = reviewParsedItem(
+    "5) 7EM-G015-02-GST Zebron ZB-5HT w/Spliced Guard 2 m, GC Cap. Column 15 m x 0.32 mm x 0.10 µm, ea cantidad 2 valor 320",
+    {
+      code: "7EM-G015-02-GST",
+      description: "Zebron ZB-5HT w/Spliced Guard 2 m, GC Cap. Column 15 m x 0.32 mm x 0.10 µm, ea",
+      quantity: 2,
+      unitPrice: 320,
+    }
+  );
+  check("descripción técnica con dimensiones y código compuesto no genera falsa alarma", itemCatalogo.fields, []);
+
   // Atajo de bloqueo del guardado.
   check("sin marcas no bloquea", hasPendingReview({ a: limpio1 }), false);
   check("con marcas bloquea", hasPendingReview({ a: limpio1, b: sinValor }), true);

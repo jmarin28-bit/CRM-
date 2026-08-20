@@ -1115,16 +1115,21 @@ export const reviewParsedItem = (
 
   // --- Cifras sobrantes: señal fuerte de lectura ambigua ---
   // Si en la línea hay números que no corresponden ni al código, ni a la
-  // cantidad, ni al valor, es que algo se leyó mal o se perdió por el camino.
+  // cantidad, ni al valor, ni a la descripción técnica, es que algo se leyó mal o se perdió por el camino.
+  const codeNumbers = numberTokens(String(item.code || ""));
+  const descNumbers = numberTokens(String(item.description || ""));
   const consumed = [
-    String(item.code || ""),
+    String(item.code || "").replace(/[.,]/g, ""),
+    ...codeNumbers,
+    ...descNumbers,
     Number.isFinite(qty) ? String(qty) : "",
     Number.isFinite(price) ? String(price) : "",
   ]
     .map((v) => v.replace(/[.,]/g, ""))
     .filter(Boolean);
 
-  const leftovers = [...numberTokens(text)];
+  const cleanTextForTokens = text.replace(/^\s*\d+[\).]\s*/, "");
+  const leftovers = [...numberTokens(cleanTextForTokens)];
   for (const used of consumed) {
     const at = leftovers.indexOf(used);
     if (at !== -1) leftovers.splice(at, 1);
