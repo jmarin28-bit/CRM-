@@ -272,6 +272,20 @@ export type ActivityV2 = {
   status?: ActivityStatus;
   followUpActivityId?: string; // vínculo entre gestión y su seguimiento programado
 
+  /**
+   * Oportunidad a la que pertenece la gestión.
+   *
+   * Las actividades nacieron ligadas solo a empresa y contacto, así que el
+   * embudo tiene que deducir a qué negocio corresponde cada una. Con este
+   * campo, lo que se registre desde el panel de la oportunidad queda atado sin
+   * ambigüedad, y una empresa con dos negocios abiertos deja de mezclar
+   * historiales.
+   *
+   * Opcional a propósito: los registros anteriores no lo tienen y se siguen
+   * resolviendo por empresa/contacto. No hay migración que correr.
+   */
+  opportunityId?: string;
+
   // Metadatos del correo cuando la actividad se generó al enviar por Gmail
   // (Contacts.tsx). Tampoco estaban declarados: createActivity recibía `any`,
   // así que cualquier campo pasaba sin chequeo.

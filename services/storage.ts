@@ -20,6 +20,7 @@ import type {
   AdvisorBudgetV2
 } from "../types";
 import { todayLocal, currentPeriod, periodBounds } from "./dates";
+import { isActivityDone } from "./activityStatus";
 
 // =====================================================
 // 1) CONFIGURACIÓN Y LLAVES (KEYS)
@@ -1371,18 +1372,11 @@ export function deleteActivity(activityId: string) {
   writeJSON(ACTIVITIES_KEY, updated);
 }
 
-export function isActivityDone(activity: any): boolean {
-  if (!activity) return false;
-  const s = (activity.status || "").toLowerCase().trim();
-  return (
-    s === "completada" ||
-    s === "completado" ||
-    s === "realizado" ||
-    s === "realizada" ||
-    s === "cancelada" ||
-    s === "cancelado"
-  );
-}
+// La implementación vive en activityStatus.ts, que no depende de localStorage
+// y por eso puede usarse desde el motor del embudo y probarse en Node. Se
+// vuelve a exportar acá para no romper los imports que ya apuntaban a storage:
+// hay una sola definición de "actividad cerrada" en toda la app.
+export { isActivityDone };
 
 export function clearAllPendingFollowUps(userId: string) {
   const activities = readJSON<ActivityV2[]>(ACTIVITIES_KEY, []);

@@ -18,11 +18,11 @@ import {
   useSortable
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { 
-  Plus, 
-  Search, 
-  Calendar, 
-  DollarSign, 
+import {
+  Plus,
+  Search,
+  Calendar,
+  DollarSign,
   Building2,
   Trash2,
   X,
@@ -32,17 +32,28 @@ import {
   ArrowRight,
   User as UserIcon,
   Filter as FilterIcon,
-  MoreVertical
+  MoreVertical,
+  Activity as ActivityIcon,
+  Bell,
+  AlertTriangle,
+  FileText,
+  Eye,
+  Pencil,
+  Printer,
+  Copy,
+  Percent
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  OpportunityV2, 
-  OpportunityStage, 
-  AccountV2, 
-  ContactV2, 
+import {
+  OpportunityV2,
+  OpportunityStage,
+  AccountV2,
+  ContactV2,
   CRMUser,
   CurrencyOption,
-  PipelineStage
+  PipelineStage,
+  ActivityV2,
+  QuoteV2
 } from '../types';
 import { addDaysLocal } from '../services/dates';
 import {
@@ -55,7 +66,9 @@ import {
   listUsers,
   updateOpportunity,
   createOpportunity,
-  listQuotesByUser
+  listQuotesByUser,
+  listActivitiesByUser,
+  getTRM
 } from '../services/storage';
 
 import {
@@ -66,23 +79,66 @@ import {
   BUSINESS_RULES
 } from '../services/analytics';
 
+// El contexto comercial de cada oportunidad (empresa, contacto, cotización,
+// última gestión, próxima acción, alertas) se calcula una sola vez en un módulo
+// puro y de ahí lo consumen la tarjeta y el panel. Así el tablero y el panel no
+// pueden contradecirse, y cuando lleguen las fases de salud, análisis IA y
+// Director Comercial reutilizan exactamente el mismo cálculo.
+import {
+  buildOpportunityContextMap,
+  quoteStatusLabel,
+  quoteStatusBadge,
+  type OpportunityContext
+} from '../services/opportunityContext';
+import { requestQuoteAction } from '../services/quoteNavigation';
+
 // --- Components ---
 
+// Formato de moneda compartido por la tarjeta y el panel: el mismo valor no
+// puede verse distinto en dos lugares de la misma pantalla.
+const formatMoney = (val: number, currency: string) =>
+  new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: currency || 'COP',
+    maximumFractionDigits: currency === 'USD' ? 2 : 0
+  }).format(Number.isFinite(val) ? val : 0);
+
+const formatCOP = (val: number) =>
+  new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    maximumFractionDigits: 0
+  }).format(Number.isFinite(val) ? val : 0);
+
+/** Iniciales del asesor: cabe en la tarjeta donde el nombre completo no cabría. */
+const initialsOf = (name: string): string => {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '—';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
 interface OpportunityCardProps {
-  opportunity: OpportunityV2;
-  account?: AccountV2;
-  contact?: ContactV2;
+  /**
+   * Contexto ya calculado. La tarjeta no vuelve a cruzar datos: solo dibuja.
+   * Cualquier regla de negocio (qué es "actividad reciente", qué cuenta como
+   * alerta) vive en opportunityContext.ts, no acá.
+   */
+  ctx: OpportunityContext;
+  /** Color de la columna, para el punto de etapa. */
+  stageColor?: string;
   onClick: (opp: OpportunityV2) => void;
   onDelete: (id: string) => void;
 }
 
-const OpportunityCard: React.FC<OpportunityCardProps> = ({ 
-  opportunity, 
-  account, 
-  contact, 
+const OpportunityCard: React.FC<OpportunityCardProps> = ({
+  ctx,
+  stageColor,
   onClick,
-  onDelete 
+  onDelete
 }) => {
+  const opportunity = ctx.opportunity;
+
   const {
     attributes,
     listeners,
@@ -90,7 +146,7 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({
     transform,
     transition,
     isDragging
-  } = useSortable({ 
+  } = useSortable({
     id: opportunity.id,
     disabled: opportunity.etapa === "Ganado" || opportunity.etapa === "Perdido"
   });
@@ -101,15 +157,26 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const formatCurrency = (val: number, currency: string) => {
-    return new Intl.NumberFormat('es-CO', {
-      style: 'currency',
-      currency: currency,
-      maximumFractionDigits: 0
-    }).format(val);
-  };
+  // La fecha de cierre solo se pinta de rojo/ámbar cuando el negocio sigue
+  // abierto: en una oportunidad ya ganada, "venció hace 20 días" no es un
+  // problema, es simplemente historia.
+  const closeTone = !ctx.isOpen
+    ? 'text-slate-400'
+    : ctx.daysToClose < 0
+      ? 'text-rose-500'
+      : ctx.daysToClose <= 7
+        ? 'text-amber-500'
+        : 'text-slate-400';
 
-  const accountName = account?.nombreComercial || account?.razonSocial || "Empresa no encontrada";
+  // Los tres indicadores del enunciado. Cada uno lleva `title` con el porqué,
+  // así el detalle está disponible sin ocupar espacio en la tarjeta.
+  const alertTone = ctx.hasRisk ? 'text-rose-500' : 'text-amber-500';
+  const followUpTone =
+    ctx.nextAction?.state === 'vencido'
+      ? 'text-rose-500'
+      : ctx.nextAction?.state === 'hoy'
+        ? 'text-amber-500'
+        : 'text-blue-500';
 
   return (
     <div
@@ -131,39 +198,111 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({
         onClick(opportunity);
       }}
     >
-      <div className="flex justify-between items-start mb-2">
-        <h4 className="font-semibold text-slate-800 dark:text-slate-100 text-sm line-clamp-2 leading-snug">
-          {opportunity.titulo}
-        </h4>
-        <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(opportunity.id);
-          }}
-          className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          <Trash2 size={14} />
-        </button>
+      <div className="flex justify-between items-start gap-2 mb-2">
+        <div className="flex items-start gap-2 min-w-0">
+          {/* Punto de etapa: repite el color de la columna sin gastar una línea
+              de texto. Al arrastrar, la tarjeta sale de su columna y este punto
+              es lo único que sigue diciendo de dónde viene. */}
+          <span
+            className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${stageColor || 'bg-slate-300'}`}
+            title={`Etapa: ${opportunity.etapa}`}
+          />
+          <h4 className="font-semibold text-slate-800 dark:text-slate-100 text-sm line-clamp-2 leading-snug">
+            {opportunity.titulo}
+          </h4>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Los iconos de lucide no aceptan `title`, así que el tooltip va en
+              un <span> envolvente. De paso agranda el área sobre la que hay que
+              parar el cursor, que con 13px sería incómoda. */}
+          {ctx.hasRecentActivity && (
+            <span
+              className="flex items-center"
+              title={
+                ctx.daysSinceLastActivity === 0
+                  ? 'Gestión registrada hoy'
+                  : `Última gestión hace ${ctx.daysSinceLastActivity} días`
+              }
+            >
+              <ActivityIcon size={13} className="text-emerald-500" />
+            </span>
+          )}
+          {ctx.hasPendingFollowUp && ctx.nextAction && (
+            <span
+              className="flex items-center"
+              title={`Seguimiento: ${ctx.nextAction.label} · ${ctx.nextAction.type}`}
+            >
+              <Bell size={13} className={followUpTone} />
+            </span>
+          )}
+          {ctx.alerts.length > 0 && (
+            <span
+              className="flex items-center"
+              title={ctx.alerts.map(a => a.label).join('\n')}
+            >
+              <AlertTriangle size={13} className={alertTone} />
+            </span>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(opportunity.id);
+            }}
+            className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-2 mt-3">
+      <div className="space-y-1.5 mt-3">
         <div className="flex items-center text-xs text-slate-500 dark:text-slate-400">
           <Building2 size={12} className="mr-2 shrink-0" />
-          <span className="truncate">{accountName}</span>
+          <span className="truncate" title={ctx.accountName}>
+            {ctx.accountName || 'Sin empresa'}
+          </span>
         </div>
-        <div className="flex items-center text-sm font-bold text-slate-700 dark:text-slate-200">
-          <DollarSign size={14} className="mr-1 text-emerald-500" />
-          {formatCurrency(opportunity.valor, opportunity.moneda)}
+        {ctx.contactName && (
+          <div className="flex items-center text-xs text-slate-400 dark:text-slate-500">
+            <UserIcon size={12} className="mr-2 shrink-0" />
+            <span className="truncate" title={ctx.contactName}>{ctx.contactName}</span>
+          </div>
+        )}
+        <div className="flex items-center text-sm font-bold text-slate-700 dark:text-slate-200 pt-0.5">
+          <DollarSign size={14} className="mr-1 text-emerald-500 shrink-0" />
+          {formatMoney(opportunity.valor, opportunity.moneda)}
+          <span className="ml-1 text-[10px] font-bold text-slate-400">{opportunity.moneda}</span>
         </div>
       </div>
 
-      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center text-[10px] uppercase font-bold tracking-wider">
-        <div className="flex items-center text-slate-400">
-          <Clock size={10} className="mr-1" />
-          {new Date(opportunity.fechaEstimadaCierre).toLocaleDateString()}
+      {ctx.quote && (
+        <div className="mt-2.5">
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${quoteStatusBadge(ctx.quote.status)}`}
+            title={`Cotización ${ctx.quote.quoteNumber} · ${ctx.quoteStatusText}`}
+          >
+            <FileText size={9} />
+            {ctx.quoteStatusText}
+          </span>
         </div>
-        <div className={`px-2 py-0.5 rounded-full ${opportunity.probabilidad >= 70 ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
-          {opportunity.probabilidad}%
+      )}
+
+      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center text-[10px] uppercase font-bold tracking-wider">
+        <div className={`flex items-center ${closeTone}`}>
+          <Clock size={10} className="mr-1" />
+          {new Date(opportunity.fechaEstimadaCierre).toLocaleDateString('es-CO')}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 text-[9px] flex items-center justify-center"
+            title={`Propietario: ${ctx.ownerName}`}
+          >
+            {initialsOf(ctx.ownerName)}
+          </span>
+          <span className={`px-2 py-0.5 rounded-full ${opportunity.probabilidad >= 70 ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
+            {opportunity.probabilidad}%
+          </span>
         </div>
       </div>
     </div>
@@ -173,9 +312,12 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({
 interface ColumnProps {
   stage: PipelineStage;
   opportunities: OpportunityV2[];
-  accounts: AccountV2[];
-  contacts: ContactV2[];
-  quotes: any[];
+  /**
+   * Contextos ya calculados, indexados por id de oportunidad. La columna ya no
+   * resuelve empresa/contacto/cotización por su cuenta: esa búsqueda estaba
+   * repetida cuatro veces en este archivo y cada copia podía envejecer aparte.
+   */
+  contextMap: Map<string, OpportunityContext>;
   onCardClick: (opp: OpportunityV2) => void;
   onDeleteCard: (id: string) => void;
   stageMetrics?: { totalValueCOP: number }; // Calculado sobre las tarjetas visibles
@@ -184,9 +326,7 @@ interface ColumnProps {
 const Column: React.FC<ColumnProps> = ({
   stage,
   opportunities,
-  accounts,
-  contacts,
-  quotes,
+  contextMap,
   onCardClick,
   onDeleteCard,
   stageMetrics
@@ -230,17 +370,17 @@ const Column: React.FC<ColumnProps> = ({
           strategy={verticalListSortingStrategy}
         >
           {opportunities.map(opp => {
-            const assocQuote = quotes.find(q => q.id === opp.quoteId) || quotes.find(q => q.opportunityId === opp.id);
-            const resolvedAccount = accounts.find(a => a.id === opp.accountId) || 
-                                    (assocQuote ? accounts.find(a => a.id === assocQuote.accountId) : undefined);
-            const resolvedContact = contacts.find(c => c.id === opp.contactId) || 
-                                    (assocQuote ? contacts.find(c => c.id === assocQuote.contactId) : undefined);
+            // El mapa se arma con TODAS las oportunidades cargadas y las de la
+            // columna son un subconjunto, así que la entrada siempre existe.
+            // El guard es una red por si eso cambia: mejor una tarjeta menos
+            // que la pantalla entera en blanco.
+            const ctx = contextMap.get(opp.id);
+            if (!ctx) return null;
             return (
-              <OpportunityCard 
-                key={opp.id} 
-                opportunity={opp} 
-                account={resolvedAccount}
-                contact={resolvedContact}
+              <OpportunityCard
+                key={opp.id}
+                ctx={ctx}
+                stageColor={stage.color}
                 onClick={onCardClick}
                 onDelete={onDeleteCard}
               />
@@ -300,7 +440,11 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
     })
   );
 
-  const [quotes, setQuotes] = useState<any[]>([]);
+  const [quotes, setQuotes] = useState<QuoteV2[]>([]);
+  // La bitácora existente. NO se crea un historial paralelo: el embudo lee las
+  // mismas actividades que Contactos y AXIS.
+  const [activities, setActivities] = useState<ActivityV2[]>([]);
+  const [trm, setTrm] = useState<number>(0);
 
   useEffect(() => {
     const data = listOpportunitiesByUser(activeUser);
@@ -310,8 +454,26 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
     setUsers(listUsers() || []);
     setStages(getStages() || []);
     setQuotes(listQuotesByUser(activeUser) || []);
+    setActivities(listActivitiesByUser(activeUser) || []);
+    setTrm(getTRM());
     setLoading(false);
   }, [refresh, activeUser]);
+
+  // Un solo cruce de datos para todo el tablero. Se calcula sobre TODAS las
+  // oportunidades (no sobre las filtradas) para que el panel siga funcionando
+  // aunque el asesor cambie el filtro con el panel abierto.
+  const contextMap = useMemo(
+    () =>
+      buildOpportunityContextMap(opportunities, {
+        accounts,
+        contacts,
+        quotes,
+        activities,
+        users: users.map(u => ({ id: u.id, name: u.name })),
+        trm
+      }),
+    [opportunities, accounts, contacts, quotes, activities, users, trm]
+  );
 
 
   const filteredOpportunities = useMemo(() => {
@@ -495,6 +657,26 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
     [opportunities, activeId]
   );
 
+  // El panel lee del mismo mapa que las tarjetas. Si leyera por su cuenta,
+  // podría mostrar una cotización distinta de la que anuncia la tarjeta.
+  const selectedCtx = useMemo(
+    () => (selectedOpp ? contextMap.get(selectedOpp.id) : undefined),
+    [selectedOpp, contextMap]
+  );
+
+  // Las acciones sobre la cotización viven en la vista de Cotizaciones (imprimir
+  // arma el HTML completo, duplicar usa duplicateQuote). Replicarlas acá sería
+  // una segunda copia que se desincroniza; en vez de eso se deja la orden y se
+  // navega, que es el mismo patrón que ya usa AXIS.
+  const handleQuoteAction = (
+    quoteId: string,
+    mode: "ver" | "editar" | "imprimir" | "duplicar"
+  ) => {
+    requestQuoteAction(quoteId, mode);
+    window.dispatchEvent(new CustomEvent("axis:navigate", { detail: { page: "quotes" } }));
+    setIsDrawerOpen(false);
+  };
+
   // Solo los contactos de la cuenta elegida: ofrecer todos permitiría guardar
   // una oportunidad cuyo contacto pertenece a otra empresa.
   const newOppContacts = useMemo(
@@ -636,9 +818,7 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
               key={stage.id}
               stage={stage}
               opportunities={filteredOpportunities.filter(o => o.etapa === stage.name)}
-              accounts={accounts}
-              contacts={contacts}
-              quotes={quotes}
+              contextMap={contextMap}
               onCardClick={(opp) => {
                 setSelectedOpp(opp);
                 setIsDrawerOpen(true);
@@ -652,16 +832,12 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
             {activeId && activeOpportunity ? (
               <div className="rotate-2 scale-105 opacity-90 shadow-2xl">
                 {(() => {
-                  const assocQuote = quotes.find(q => q.id === activeOpportunity.quoteId) || quotes.find(q => q.opportunityId === activeOpportunity.id);
-                  const resolvedAccount = accounts.find(a => a.id === activeOpportunity.accountId) || 
-                                          (assocQuote ? accounts.find(a => a.id === assocQuote.accountId) : undefined);
-                  const resolvedContact = contacts.find(c => c.id === activeOpportunity.contactId) || 
-                                          (assocQuote ? contacts.find(c => c.id === assocQuote.contactId) : undefined);
+                  const ctx = contextMap.get(activeOpportunity.id);
+                  if (!ctx) return null;
                   return (
-                    <OpportunityCard 
-                      opportunity={activeOpportunity}
-                      account={resolvedAccount}
-                      contact={resolvedContact}
+                    <OpportunityCard
+                      ctx={ctx}
+                      stageColor={stages.find(s => s.name === activeOpportunity.etapa)?.color}
                       onClick={() => {}}
                       onDelete={() => {}}
                     />
@@ -711,131 +887,228 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
                 </button>
               </div>
 
-              <h2 className="text-2xl font-black text-slate-800 dark:text-white mb-6 leading-tight">
+              {/* ── ENCABEZADO ─────────────────────────────────────────────
+                  Quién es el negocio: nombre, empresa, contacto y propietario.
+                  La etapa vive en el selector de arriba, que además permite
+                  cambiarla, así que no se repite acá como texto muerto. */}
+              <h2 className="text-2xl font-black text-slate-800 dark:text-white mb-4 leading-tight">
                 {selectedOpp.titulo}
               </h2>
 
-              <div className="space-y-6">
-                <div>
-                  <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-2">Cliente</label>
-                  <div className="flex items-center gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
-                    <Building2 className="text-blue-500" />
-                    <div>
-                      {(() => {
-                        const assocQuote = quotes.find(q => q.id === selectedOpp.quoteId) || quotes.find(q => q.opportunityId === selectedOpp.id);
-                        const resolvedAccount = accounts.find(a => a.id === selectedOpp.accountId) || 
-                                                (assocQuote ? accounts.find(a => a.id === assocQuote.accountId) : undefined);
-                        return (
-                          <>
-                            <div className="font-bold text-slate-700 dark:text-slate-200">
-                              {resolvedAccount ? (resolvedAccount.nombreComercial || resolvedAccount.razonSocial) : "Empresa no encontrada"}
-                            </div>
-                            {resolvedAccount?.razonSocial && resolvedAccount.nombreComercial && resolvedAccount.razonSocial !== resolvedAccount.nombreComercial && (
-                              <div className="text-xs text-slate-500">
-                                {resolvedAccount.razonSocial}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 space-y-3">
+                <div className="flex items-start gap-3">
+                  <Building2 size={18} className="text-blue-500 mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-700 dark:text-slate-200 break-words">
+                      {selectedCtx?.accountName || "Empresa no encontrada"}
                     </div>
+                    {selectedCtx?.account?.razonSocial &&
+                      selectedCtx.account.nombreComercial &&
+                      selectedCtx.account.razonSocial !== selectedCtx.account.nombreComercial && (
+                        <div className="text-xs text-slate-500 break-words">
+                          {selectedCtx.account.razonSocial}
+                        </div>
+                      )}
                   </div>
                 </div>
 
+                <div className="flex items-start gap-3">
+                  <UserIcon size={18} className="text-slate-400 mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 break-words">
+                      {selectedCtx?.contactName || "Sin contacto asignado"}
+                    </div>
+                    {selectedCtx?.contact?.role && (
+                      <div className="text-xs text-slate-500">{selectedCtx.contact.role}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1 border-t border-slate-200/70 dark:border-slate-700">
+                  <span className="w-[18px] text-center text-[10px] font-black text-slate-400 shrink-0">
+                    {initialsOf(selectedCtx?.ownerName || "")}
+                  </span>
+                  <div className="text-xs text-slate-500">
+                    Propietario:{" "}
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      {selectedCtx?.ownerName || "Sin asignar"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── INFORMACIÓN ECONÓMICA ───────────────────────────────────
+                  El valor ponderado se muestra siempre en COP porque es lo que
+                  se puede sumar con el resto del embudo; el valor de arriba
+                  queda en la moneda en que se negoció. */}
+              <div className="mt-6">
+                <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-3">
+                  Información económica
+                </label>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-2">Valor</label>
-                    <div className="text-xl font-black text-slate-800 dark:text-white flex items-center gap-2">
-                       <span className="text-emerald-500">$</span>
-                       {new Intl.NumberFormat('es-CO').format(selectedOpp.valor)}
-                       <span className="text-sm font-normal text-slate-400">{selectedOpp.moneda}</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Valor</span>
+                    <div className="text-xl font-black text-slate-800 dark:text-white flex items-baseline gap-1.5 flex-wrap">
+                      {formatMoney(selectedOpp.valor, selectedOpp.moneda)}
+                      <span className="text-xs font-bold text-slate-400">{selectedOpp.moneda}</span>
                     </div>
+                    {selectedOpp.moneda !== "COP" && selectedCtx && (
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        ≈ {formatCOP(selectedCtx.valorCOP)} a TRM {new Intl.NumberFormat('es-CO').format(trm)}
+                      </div>
+                    )}
                   </div>
+
                   <div>
-                    <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-2">Probabilidad</label>
-                    <div className="text-xl font-black text-slate-800 dark:text-white">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Probabilidad</span>
+                    <div className="text-xl font-black text-slate-800 dark:text-white flex items-center gap-1">
+                      <Percent size={15} className="text-blue-500" />
                       {selectedOpp.probabilidad}%
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-2">Cierre Estimado</label>
-                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-medium">
-                    <Calendar size={18} />
-                    {new Date(selectedOpp.fechaEstimadaCierre).toLocaleDateString(undefined, { 
-                      year: 'numeric', month: 'long', day: 'numeric' 
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-2">Propietario</label>
-                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-medium">
-                    <UserIcon size={18} />
-                    {users.find(u => u.id === selectedOpp.ownerId)?.name || 'Sin asignar'}
-                  </div>
-                </div>
-
-                                {(() => {
-                  const associatedQuote = quotes.find(q => q.id === selectedOpp.quoteId) || quotes.find(q => q.opportunityId === selectedOpp.id);
-                  if (!associatedQuote) return null;
-
-                  const quoteAccount = accounts.find(a => a.id === associatedQuote.accountId);
-                  const quoteContact = contacts.find(c => c.id === associatedQuote.contactId);
-
-                  return (
-                    <div className="mt-4 p-4 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl">
-                      <h4 className="text-xs font-black uppercase text-blue-700 dark:text-blue-400 tracking-wider mb-3">Cotización Asociada</h4>
-                      <div className="space-y-2 text-slate-700 dark:text-slate-300 text-sm">
-                        <div>
-                          <span className="font-semibold text-slate-500">Número de cotización: </span>
-                          <span className="font-bold text-slate-900 dark:text-white">{associatedQuote.quoteNumber}</span>
-                        </div>
-                        {quoteAccount && (
-                          <div>
-                            <span className="font-semibold text-slate-500">Empresa: </span>
-                            <span className="font-bold text-slate-900 dark:text-white">{quoteAccount.nombreComercial || quoteAccount.razonSocial}</span>
-                          </div>
-                        )}
-                        {quoteContact && (
-                          <div>
-                            <span className="font-semibold text-slate-500">Contacto: </span>
-                            <span className="font-bold text-slate-900 dark:text-white">{quoteContact.fullName}</span>
-                          </div>
-                        )}
-                        <div>
-                          <span className="font-semibold text-slate-500">Estado: </span>
-                          <span className="capitalize font-bold text-slate-900 dark:text-white">{associatedQuote.status.replaceAll('_', ' ')}</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-slate-500">Moneda: </span>
-                          <span className="font-bold text-slate-900 dark:text-white">{associatedQuote.currency}</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-slate-500">Valor Total Cotizado: </span>
-                          <span className="font-bold text-emerald-600">
-                            {new Intl.NumberFormat('es-CO', { style: 'currency', currency: associatedQuote.currency, maximumFractionDigits: associatedQuote.currency === 'USD' ? 2 : 0 }).format(associatedQuote.total)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-slate-500">Cantidad de ítems: </span>
-                          <span className="font-bold">{associatedQuote.items?.length || 0}</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-slate-500">Fecha de Creación: </span>
-                          <span>{associatedQuote.createdAt ? new Date(associatedQuote.createdAt).toLocaleDateString('es-CO') : associatedQuote.issueDate}</span>
-                        </div>
-                        {associatedQuote.sentAt && (
-                          <div>
-                            <span className="font-semibold text-slate-500">Fecha de Envío: </span>
-                            <span>{new Date(associatedQuote.sentAt).toLocaleDateString('es-CO')}</span>
-                          </div>
-                        )}
-                      </div>
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Valor ponderado</span>
+                    <div className="text-base font-bold text-emerald-600 dark:text-emerald-400">
+                      {formatCOP(selectedCtx?.valorPonderadoCOP ?? 0)}
                     </div>
-                  );
-                })()}
+                    <div className="text-[11px] text-slate-400 mt-0.5">valor × probabilidad</div>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Cierre estimado</span>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                      <Calendar size={15} className="shrink-0" />
+                      {new Date(selectedOpp.fechaEstimadaCierre).toLocaleDateString('es-CO', {
+                        year: 'numeric', month: 'short', day: 'numeric'
+                      })}
+                    </div>
+                    {selectedCtx?.isOpen && (
+                      <div
+                        className={`text-[11px] mt-0.5 font-semibold ${
+                          selectedCtx.daysToClose < 0
+                            ? 'text-rose-500'
+                            : selectedCtx.daysToClose <= 7
+                              ? 'text-amber-500'
+                              : 'text-slate-400'
+                        }`}
+                      >
+                        {selectedCtx.daysToClose < 0
+                          ? `Venció hace ${Math.abs(selectedCtx.daysToClose)} días`
+                          : selectedCtx.daysToClose === 0
+                            ? 'Vence hoy'
+                            : `Faltan ${selectedCtx.daysToClose} días`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── RELACIÓN CON LA COTIZACIÓN ────────────────────────────── */}
+              <div className="mt-6">
+                <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-3">
+                  Cotización asociada
+                </label>
+
+                {!selectedCtx?.quote ? (
+                  <div className="p-4 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 text-sm text-slate-400 flex items-center gap-2">
+                    <FileText size={16} className="shrink-0" />
+                    Esta oportunidad todavía no tiene cotización asociada.
+                  </div>
+                ) : (
+                  <div className="p-4 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <span className="text-sm font-black text-slate-900 dark:text-white">
+                        {selectedCtx.quote.quoteNumber}
+                      </span>
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${quoteStatusBadge(selectedCtx.quote.status)}`}
+                      >
+                        {selectedCtx.quoteStatusText}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                      <div>
+                        <span className="font-semibold text-slate-500">Empresa: </span>
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          {selectedCtx.accountName || "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500">Contacto: </span>
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          {selectedCtx.contactName || "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500">Valor total cotizado: </span>
+                        <span className="font-bold text-emerald-600">
+                          {formatMoney(selectedCtx.quote.total, selectedCtx.quote.currency)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500">Moneda: </span>
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          {selectedCtx.quote.currency}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500">Cantidad de ítems: </span>
+                        <span className="font-bold">{selectedCtx.quote.items?.length || 0}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500">Fecha de creación: </span>
+                        <span>
+                          {selectedCtx.quote.createdAt
+                            ? new Date(selectedCtx.quote.createdAt).toLocaleDateString('es-CO')
+                            : selectedCtx.quote.issueDate}
+                        </span>
+                      </div>
+                      {selectedCtx.quote.sentAt && (
+                        <div>
+                          <span className="font-semibold text-slate-500">Fecha de envío: </span>
+                          <span>{new Date(selectedCtx.quote.sentAt).toLocaleDateString('es-CO')}</span>
+                          {typeof selectedCtx.daysSinceQuoteSent === 'number' && (
+                            <span className="text-slate-400">
+                              {" "}· hace {selectedCtx.daysSinceQuoteSent} días
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-blue-100 dark:border-blue-900/30 grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => handleQuoteAction(selectedCtx.quote!.id, "ver")}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Eye size={14} /> Ver
+                      </button>
+                      <button
+                        onClick={() => handleQuoteAction(selectedCtx.quote!.id, "editar")}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Pencil size={14} /> Editar
+                      </button>
+                      <button
+                        onClick={() => handleQuoteAction(selectedCtx.quote!.id, "imprimir")}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Printer size={14} /> Imprimir
+                      </button>
+                      <button
+                        onClick={() => handleQuoteAction(selectedCtx.quote!.id, "duplicar")}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Copy size={14} /> Duplicar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800 flex gap-4">

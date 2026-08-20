@@ -11,7 +11,8 @@
     "test:rut": "node --experimental-strip-types services/rutNit.test.ts",
     "test:quotes": "node --experimental-strip-types services/quoteParser.test.ts",
     "test:draft": "node --experimental-strip-types services/quoteDraft.test.ts",
-    "test": "npm run test:rut && npm run test:quotes && npm run test:draft"
+    "test:pipeline": "node --experimental-strip-types services/opportunityContext.test.ts",
+    "test": "npm run test:rut && npm run test:quotes && npm run test:draft && npm run test:pipeline"
   },
   "dependencies": {
     "@dnd-kit/core": "6.1.0",

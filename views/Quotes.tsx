@@ -49,6 +49,8 @@ import {
   buildQuotePayload,
   missingReferenceLabel
 } from '../services/quoteDraft';
+import { quoteStatusLabel, quoteStatusBadge } from '../services/opportunityContext';
+import { readQuoteAction, clearQuoteAction, QUOTE_ACTION_EVENT } from '../services/quoteNavigation';
 import {
   Plus, Trash2, X, List, ShieldCheck, StickyNote, Building2, Mic, AlertTriangle
 } from 'lucide-react';
@@ -900,51 +902,12 @@ const getEmptyQuoteDraft = (type: QuoteType = 'producto'): Partial<QuoteV2> => {
   };
 };
 
-const getQuoteStatusLabel = (status: QuoteStatus) => {
-  switch (status) {
-    case "borrador":
-      return "Borrador";
-    case "pendiente_costo_proveedor":
-      return "Pendiente por costo del proveedor";
-    case "revisada":
-      return "Revisada";
-    case "enviada":
-      return "Enviada";
-    case "con_oc":
-      return "Con OC";
-    case "rechazada":
-      return "Rechazada";
-    case "cancelada":
-      return "Cancelada";
-    case "vencida":
-      return "Vencida";
-    default:
-      return status;
-  }
-};
-
-const getQuoteStatusBadgeClass = (status: QuoteStatus) => {
-  switch (status) {
-    case "borrador":
-      return "bg-slate-100 text-slate-700";
-    case "pendiente_costo_proveedor":
-      return "bg-amber-100 text-amber-700";
-    case "revisada":
-      return "bg-indigo-100 text-indigo-700";
-    case "enviada":
-      return "bg-blue-100 text-blue-700";
-    case "con_oc":
-      return "bg-emerald-100 text-emerald-700";
-    case "rechazada":
-      return "bg-rose-100 text-rose-700";
-    case "cancelada":
-      return "bg-red-100 text-red-700";
-    case "vencida":
-      return "bg-stone-100 text-stone-700";
-    default:
-      return "bg-slate-100 text-slate-700";
-  }
-};
+// El texto y el color de cada estado ahora viven en opportunityContext.ts,
+// porque el Embudo de Ventas muestra el mismo estado en la tarjeta y en el
+// panel de la oportunidad. Con dos tablas separadas, agregar un estado nuevo
+// obligaba a acordarse de tocar las dos y el embudo mostraba "undefined".
+const getQuoteStatusLabel = (status: QuoteStatus) => quoteStatusLabel(status);
+const getQuoteStatusBadgeClass = (status: QuoteStatus) => quoteStatusBadge(status);
 
 interface QuotesProps {
   activeUser: CRMUser;
@@ -2393,6 +2356,70 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
     setRefresh((prev) => prev + 1);
   };
 
+  /**
+   * Abre la ficha de una cotización ya guardada.
+   *
+   * Estaba escrito a mano dentro del onClick de la tarjeta del listado. Se
+   * extrae porque el Embudo de Ventas necesita hacer exactamente lo mismo, y
+   * si se copiaba, olvidarse de un `setItemReviews({})` bastaba para que una
+   * cotización guardada apareciera con marcas de revisión del asistente.
+   */
+  const openSavedQuote = (
+    quote: QuoteV2,
+    tab: 'general' | 'items' | 'condiciones' | 'observaciones' = "general"
+  ) => {
+    setDraft(quote);
+    setApplyTax(quote.tax > 0);
+    setActiveTab(tab);
+    // Una cotización guardada no arrastra marcas de revisión del asistente:
+    // lo que se ve es lo que un humano ya validó.
+    setItemReviews({});
+    setAiWarnings([]);
+    setAiMessage("");
+    setShowModal(true);
+  };
+
+  // Órdenes que llegan desde el panel de la oportunidad (Embudo de Ventas).
+  //
+  // Se navega primero y la orden queda en localStorage porque esta vista puede
+  // no estar montada cuando el asesor hace clic. Al montar se lee, y si ya
+  // estaba montada el evento la despierta en el acto. La dependencia en
+  // `quotes` es a propósito: la primera pasada suele ocurrir antes de que las
+  // cotizaciones estén cargadas, y la orden se queda esperando ese render.
+  useEffect(() => {
+    const applyPendingQuoteAction = () => {
+      const action = readQuoteAction();
+      if (!action) return;
+
+      const quote = quotes.find((q) => q.id === action.quoteId);
+      if (!quote) {
+        // Si ya hay cotizaciones cargadas y aun así no aparece, la orden apunta
+        // a algo que este usuario no puede ver: se descarta para que no quede
+        // disparándose en cada render.
+        if (quotes.length > 0) clearQuoteAction();
+        return;
+      }
+
+      clearQuoteAction();
+
+      if (action.mode === "imprimir") {
+        handlePrint(quote);
+        return;
+      }
+      if (action.mode === "duplicar") {
+        handleDuplicateQuote(quote.id);
+        return;
+      }
+      // "ver" y "editar" abren la misma ficha porque hoy no existe una vista de
+      // solo lectura; lo único que cambia es dónde queda parado el asesor.
+      openSavedQuote(quote, action.mode === "editar" ? "items" : "general");
+    };
+
+    applyPendingQuoteAction();
+    window.addEventListener(QUOTE_ACTION_EVENT, applyPendingQuoteAction);
+    return () => window.removeEventListener(QUOTE_ACTION_EVENT, applyPendingQuoteAction);
+  }, [quotes]);
+
   const handleStatusChange = (quoteId: string, status: QuoteStatus) => {
     if (status === "rechazada") {
       setRejectionModal({ quoteId });
@@ -3639,17 +3666,7 @@ export default function Quotes({ activeUser, pendingQuoteData, onClearPending }:
           return (
             <div
               key={q.id}
-              onClick={() => {
-                setDraft(q);
-                setApplyTax(q.tax > 0);
-                setActiveTab("general");
-                // Una cotización guardada no arrastra marcas de revisión del
-                // asistente: lo que se ve es lo que un humano ya validó.
-                setItemReviews({});
-                setAiWarnings([]);
-                setAiMessage("");
-                setShowModal(true);
-              }}
+              onClick={() => openSavedQuote(q)}
               className="bg-white border border-slate-200 p-7 rounded-[28px] shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all group cursor-pointer"
             >
               <div className="flex items-start justify-between gap-3">
