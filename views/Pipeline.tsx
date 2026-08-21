@@ -107,7 +107,8 @@ import {
   CARD_SCORE_THRESHOLD,
   HEALTH_BAND_CLASS,
   HEALTH_BAR_CLASS,
-  healthSentence
+  healthSentence,
+  explainHealth
 } from '../services/opportunityHealth';
 
 // La bitácora se dibuja con el mismo componente que usa el historial de
@@ -724,6 +725,17 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
     [selectedOpp, contextMap]
   );
 
+  // El desglose del puntaje (Etapa 6). Se arma acá y no dentro del JSX para no
+  // recalcular la deduplicación en cada render del panel, y para que la vista
+  // solo tenga que pintar la lista que le llega.
+  const healthExplanation = useMemo(
+    () =>
+      selectedCtx
+        ? explainHealth(selectedCtx.health, selectedCtx.alerts)
+        : undefined,
+    [selectedCtx]
+  );
+
   // Las acciones sobre la cotización viven en la vista de Cotizaciones (imprimir
   // arma el HTML completo, duplicar usa duplicateQuote). Replicarlas acá sería
   // una segunda copia que se desincroniza; en vez de eso se deja la orden y se
@@ -1206,8 +1218,8 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
                   Las oportunidades cerradas no se puntúan: mostrarle 45/100 a
                   alguien que ya facturó es ruido. Por eso el isScored.
 
-                  El desglose de por qué el puntaje es ese llega en su etapa;
-                  acá todavía solo se muestra el número y la banda. */}
+                  El desglose de por qué el puntaje es ese va justo abajo, en su
+                  propio bloque. */}
               {selectedCtx?.health?.isScored && (
                 <div className="mt-6">
                   <div
@@ -1235,6 +1247,123 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ── POR QUÉ ESTE PUNTAJE (Etapa 6) ──────────────────────────
+                  Un puntaje sin explicación es una opinión con formato de dato.
+                  Si el asesor no puede ver de dónde salió el 45, o lo obedece
+                  sin entenderlo o lo ignora; ninguna de las dos sirve.
+
+                  Cada línea trae su costo y la resta cierra abajo, así que el
+                  número es auditable: si alguien no está de acuerdo, puede
+                  señalar exactamente qué renglón le sobra.
+
+                  Se muestra siempre, incluso en un 100/100, porque "no hay
+                  nada que corregir" también es información. Un bloque que
+                  aparece y desaparece obliga a preguntarse si falta o si está
+                  todo bien. */}
+              {healthExplanation && selectedCtx?.health?.isScored && (
+                <div className="mt-4">
+                  <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-3">
+                    Por qué este puntaje
+                  </label>
+
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/60 overflow-hidden">
+                    {healthExplanation.scored.length === 0 && (
+                      <div className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                        No hay nada restando puntos. La negociación está al día
+                        en gestión, seguimiento, fecha de cierre y cotización.
+                      </div>
+                    )}
+
+                    {healthExplanation.scored.map(factor => (
+                      <div
+                        key={factor.code}
+                        className="px-4 py-2.5 flex items-start justify-between gap-3"
+                      >
+                        <span className="text-xs text-slate-600 dark:text-slate-300 leading-snug">
+                          {factor.label}
+                        </span>
+                        {/* El signo va explícito: "−25" se lee como un castigo,
+                            "25" se puede leer como un aporte.
+
+                            Se arma con el mismo signo menos tipográfico (−) que
+                            usa la resta de abajo en vez de dejar que el número
+                            negativo imprima un guion ASCII: son dos glifos de
+                            ancho distinto y la columna quedaba desalineada
+                            contra el total. */}
+                        <span
+                          className={`text-xs font-black tabular-nums shrink-0 ${
+                            factor.severity === "risk"
+                              ? "text-rose-600 dark:text-rose-400"
+                              : "text-amber-600 dark:text-amber-400"
+                          }`}
+                        >
+                          {`−${Math.abs(factor.points)}`}
+                        </span>
+                      </div>
+                    ))}
+
+                    {/* La resta. Cuando los castigos pasan de 100 el puntaje se
+                        topa en 0, y escribir "100 − 105 = 0" sería falso: ese
+                        tipo de número que no cuadra le da a cualquiera una razón
+                        para desconfiar del resto del panel. explainHealth avisa
+                        con clamped y acá se cambia la redacción. */}
+                    <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums">
+                        {healthExplanation.clamped
+                          ? `100 − ${healthExplanation.totalPenalty} (el puntaje no baja de 0)`
+                          : `100 − ${healthExplanation.totalPenalty}`}
+                      </span>
+                      <span className="text-xs font-black text-slate-700 dark:text-slate-200 tabular-nums shrink-0">
+                        = {selectedCtx.health.score}/100
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* ── OTRAS SEÑALES ────────────────────────────────────────
+                      Alertas que el contexto ya detectaba pero que solo se veían
+                      pasando el cursor por encima de un icono de 13px en la
+                      tarjeta. No restan puntos —o porque no son culpa de la
+                      gestión, o porque todavía no hay criterio para ponerles
+                      precio— pero sí valen la pena leerlas.
+
+                      Van marcadas como que no puntúan para que nadie intente
+                      cuadrar la resta de arriba con estas incluidas.
+
+                      explainHealth ya quitó las que repiten un factor: sin la
+                      deduplicación, el panel diría "Sin gestión hace 21 días" y
+                      "Sin actividad registrada hace 21 días" seguidas. */}
+                  {healthExplanation.unscored.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase font-black text-slate-400 tracking-widest mb-2">
+                        Otras señales{" "}
+                        <span className="normal-case tracking-normal font-bold text-slate-400/80">
+                          (no afectan el puntaje)
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {healthExplanation.unscored.map(alert => (
+                          <div
+                            key={alert.code}
+                            className="flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400 leading-snug"
+                          >
+                            <span
+                              className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                                alert.severity === "risk"
+                                  ? "bg-rose-400"
+                                  : alert.severity === "warn"
+                                  ? "bg-amber-400"
+                                  : "bg-slate-300 dark:bg-slate-600"
+                              }`}
+                            />
+                            <span>{alert.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -285,3 +285,91 @@ export function computeHealth(
 /** Texto exacto que pide la Etapa 14. Existe para que nadie lo escriba a mano. */
 export const healthSentence = (health: OpportunityHealth): string =>
   health.isScored ? `Salud comercial: ${health.score}/100` : "";
+
+// ============================================================
+// Explicación (Etapa 6)
+// ============================================================
+
+/**
+ * Forma mínima de una alerta. Se declara acá en vez de importar OpportunityAlert
+ * para que este módulo siga sin depender de opportunityContext más que en los
+ * umbrales: OpportunityAlert encaja por estructura, sin necesidad de nombrarla.
+ */
+export interface ExplainableAlert {
+  code: string;
+  label: string;
+  severity: string;
+}
+
+export interface HealthExplanation {
+  /** Los factores que sí movieron el puntaje, de mayor a menor castigo. */
+  scored: HealthFactor[];
+  /** Señales que importan pero no puntúan. Nunca repiten algo ya dicho arriba. */
+  unscored: ExplainableAlert[];
+  /** Suma de los castigos, en positivo, para poder mostrar "100 − 85 = 15". */
+  totalPenalty: number;
+  /**
+   * true cuando los castigos suman más de 100 y el puntaje se topó en 0.
+   *
+   * Importa para el texto: sin esto la vista escribiría "100 − 105 = 0", que es
+   * aritmética falsa y le da a alguien una razón para desconfiar del resto de
+   * los números. Con esto se puede decir que el puntaje no baja de 0.
+   */
+  clamped: boolean;
+}
+
+/**
+ * Qué alerta queda tapada por qué factores.
+ *
+ * El embudo tiene dos sistemas que miran los mismos datos: las alertas (que
+ * existían antes, para el tooltip de la tarjeta) y los factores de salud. Se
+ * solapan casi por completo, y sin esta tabla el panel diría dos veces lo mismo
+ * con dos redacciones distintas —"Sin gestión hace 21 días" y "Sin actividad
+ * registrada hace 21 días"— que es la forma más rápida de que alguien deje de
+ * leer la lista entera.
+ *
+ * No se fusionaron los dos sistemas en uno: las alertas también alimentan el
+ * tooltip de la tarjeta y el punto rojo, y cambiarlas sería tocar algo que ya
+ * funciona para resolver un problema de presentación. Se prefiere una tabla
+ * explícita de solapamientos, que se lee de un vistazo y falla de forma obvia.
+ *
+ * Las alertas que NO están acá (sin-contacto, cierre-proximo,
+ * cotizacion-sin-respuesta) no tienen factor equivalente: no restan puntos pero
+ * sí valen la pena, y hasta ahora solo se veían pasando el cursor por encima de
+ * un icono de 13px.
+ */
+const ALERTA_YA_EXPLICADA: Record<string, string[]> = {
+  "sin-cotizacion": ["etapa-sin-cotizacion"],
+  "cierre-vencido": ["cierre-vencido", "cierre-vencido-viejo"],
+  "sin-actividad": ["gestion-tibia", "gestion-estancada", "gestion-abandonada", "sin-gestion"],
+  "sin-actividad-nunca": ["sin-gestion", "gestion-abandonada"],
+  "seguimiento-vencido": ["seguimiento-vencido", "seguimiento-vencido-viejo"],
+  "sin-proxima-accion": ["sin-seguimiento"],
+};
+
+export function explainHealth(
+  health: OpportunityHealth,
+  alerts: ExplainableAlert[] = []
+): HealthExplanation {
+  // Una oportunidad cerrada no se puntúa, así que tampoco hay nada que explicar.
+  if (!health.isScored) return { scored: [], unscored: [], totalPenalty: 0, clamped: false };
+
+  const yaDicho = new Set(health.factors.map((f) => f.code));
+
+  const unscored = (alerts || []).filter((a) => {
+    const cubierta = ALERTA_YA_EXPLICADA[a.code];
+    if (!cubierta) return true;
+    return !cubierta.some((code) => yaDicho.has(code));
+  });
+
+  const totalPenalty = Math.abs(health.factors.reduce((sum, f) => sum + f.points, 0));
+
+  return {
+    scored: health.factors,
+    unscored,
+    totalPenalty,
+    // Se deduce comparando contra el puntaje real en vez de repetir el clamp acá:
+    // si mañana computeHealth cambia el tope, esto lo sigue sin tocarse.
+    clamped: 100 - totalPenalty !== health.score,
+  };
+}

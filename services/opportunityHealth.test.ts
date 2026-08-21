@@ -11,6 +11,7 @@
 
 import {
   computeHealth,
+  explainHealth,
   healthSentence,
   bandOf,
   HEALTHY_SCORE,
@@ -192,6 +193,126 @@ console.log("\n=== 10. El texto que exige la Etapa 14 ===");
   check("no habla de probabilidad", !/probabilidad/i.test(frase));
   check("no usa el símbolo de porcentaje", !frase.includes("%"));
   check("una cerrada no produce frase", healthSentence(computeHealth(sana({ isOpen: false }))) === "");
+}
+
+console.log("\n=== 11. Explicación: no repetir lo que ya se dijo ===");
+{
+  // Un negocio con los cuatro problemas. Las alertas del contexto dicen casi lo
+  // mismo con otras palabras, y ese es justo el solapamiento a evitar.
+  const h = computeHealth({
+    etapa: "Negociación",
+    isOpen: true,
+    daysSinceLastActivity: 21,
+    nextActionState: "vencido",
+    nextActionDaysOverdue: 9,
+    daysToClose: -9,
+    hasQuote: false,
+  });
+  const alertas = [
+    { code: "sin-actividad", label: "Sin actividad registrada hace 21 días.", severity: "risk" },
+    { code: "seguimiento-vencido", label: "Hay un seguimiento vencido hace 9 días.", severity: "risk" },
+    { code: "cierre-vencido", label: "La fecha estimada de cierre pasó hace 9 días.", severity: "risk" },
+    { code: "sin-cotizacion", label: "Está en etapa Negociación pero no tiene cotización vinculada.", severity: "warn" },
+    { code: "sin-contacto", label: "La oportunidad no tiene contacto asociado.", severity: "warn" },
+  ];
+  const exp = explainHealth(h, alertas);
+
+  check("los cuatro factores se explican", exp.scored.length === 4, exp.scored.map((f) => f.code));
+  // Las cuatro alertas duplicadas se caen; sin-contacto no tiene factor y queda.
+  check("descarta las alertas ya explicadas", exp.unscored.length === 1, exp.unscored.map((a) => a.code));
+  check("y conserva la que nadie más dice", exp.unscored[0]?.code === "sin-contacto", exp.unscored[0]?.code);
+  check("la suma de castigos cuadra con el puntaje", 100 - exp.totalPenalty === h.score, { totalPenalty: exp.totalPenalty, score: h.score });
+
+  // Lo que de verdad se quiere evitar: leer dos veces el mismo problema.
+  const textos = [...exp.scored.map((f) => f.label), ...exp.unscored.map((a) => a.label)];
+  check("ningún problema aparece dos veces", !textos.some((t) => /actividad registrada/i.test(t)), textos);
+  check("no se menciona el cierre dos veces", textos.filter((t) => /cierre/i.test(t)).length === 1, textos.filter((t) => /cierre/i.test(t)));
+}
+
+console.log("\n=== 12. Explicación: señales que no puntúan ===");
+{
+  // Oportunidad impecable en lo que la salud mide, pero con dos avisos reales
+  // que hasta ahora solo se veían en el tooltip de un icono de 13px.
+  const h = computeHealth(sana());
+  const exp = explainHealth(h, [
+    { code: "sin-contacto", label: "La oportunidad no tiene contacto asociado.", severity: "warn" },
+    { code: "cotizacion-sin-respuesta", label: "La cotización se envió hace 11 días y no hay respuesta registrada.", severity: "risk" },
+    { code: "cierre-proximo", label: "Cierre estimado en 3 días.", severity: "info" },
+  ]);
+  check("un 100/100 no lista factores", exp.scored.length === 0);
+  check("pero sí muestra las señales sueltas", exp.unscored.length === 3, exp.unscored.map((a) => a.code));
+  check("sin castigo acumulado", exp.totalPenalty === 0, exp.totalPenalty);
+  check(
+    "la cotización sin respuesta sale del tooltip",
+    exp.unscored.some((a) => a.code === "cotizacion-sin-respuesta")
+  );
+}
+
+console.log("\n=== 13. Explicación: bordes ===");
+{
+  const cerrada = explainHealth(computeHealth(sana({ isOpen: false })), [
+    { code: "sin-contacto", label: "x", severity: "warn" },
+  ]);
+  check("una cerrada no explica nada", cerrada.scored.length === 0 && cerrada.unscored.length === 0);
+  check("ni acumula castigo", cerrada.totalPenalty === 0);
+
+  const sinAlertas = explainHealth(computeHealth(sana({ daysSinceLastActivity: 21 })));
+  check("funciona sin pasarle alertas", sinAlertas.scored.length === 1, sinAlertas.scored.map((f) => f.code));
+  check("y no inventa señales", sinAlertas.unscored.length === 0);
+
+  // "sin-actividad-nunca" la emite el contexto cuando jamás hubo una gestión;
+  // el factor equivalente es "sin-gestion".
+  const nunca = explainHealth(computeHealth(sana({ daysSinceLastActivity: undefined })), [
+    { code: "sin-actividad-nunca", label: "No hay ninguna actividad registrada.", severity: "risk" },
+  ]);
+  check("también descarta la alerta de 'nunca hubo actividad'", nunca.unscored.length === 0, nunca.unscored.map((a) => a.code));
+
+  // Una alerta desconocida (futura) debe pasar, no desaparecer en silencio.
+  const futura = explainHealth(computeHealth(sana()), [
+    { code: "alerta-que-no-existe-todavia", label: "Algo nuevo.", severity: "warn" },
+  ]);
+  check("una alerta nueva no se pierde por no estar en la tabla", futura.unscored.length === 1);
+}
+
+console.log("\n=== 14. Explicación: la resta que se muestra tiene que ser cierta ===");
+{
+  // El panel escribe "100 − N = puntaje". Cuando los castigos pasan de 100 esa
+  // frase sería falsa ("100 − 105 = 0"), y un número que no cuadra es motivo
+  // suficiente para desconfiar del resto del panel. La bandera existe para que
+  // la vista pueda cambiar de redacción en ese caso.
+  const peor = computeHealth({
+    etapa: "Negociación",
+    isOpen: true,
+    daysSinceLastActivity: undefined,
+    nextActionState: "vencido",
+    nextActionDaysOverdue: 90,
+    daysToClose: -120,
+    hasQuote: false,
+  });
+  const expPeor = explainHealth(peor);
+  check("el peor caso acumula más de 100 en castigos", expPeor.totalPenalty === 105, expPeor.totalPenalty);
+  check("el puntaje se topa en 0", peor.score === 0, peor.score);
+  check("y la explicación lo declara topado", expPeor.clamped === true);
+  check("la resta cruda NO cuadraría", 100 - expPeor.totalPenalty !== peor.score);
+
+  // Caso normal: la resta sí cuadra y no hay que aclarar nada.
+  const medio = computeHealth(sana({ daysSinceLastActivity: 21, daysToClose: -5 }));
+  const expMedio = explainHealth(medio);
+  check("un caso normal no está topado", expMedio.clamped === false, {
+    totalPenalty: expMedio.totalPenalty,
+    score: medio.score,
+  });
+  check("y la resta cuadra exacta", 100 - expMedio.totalPenalty === medio.score, {
+    totalPenalty: expMedio.totalPenalty,
+    score: medio.score,
+  });
+
+  const sano = explainHealth(computeHealth(sana()));
+  check("un 100/100 tampoco está topado", sano.clamped === false);
+
+  // Una cerrada no puntúa; la bandera no debe quedar en un estado ambiguo.
+  const cerrada = explainHealth(computeHealth(sana({ isOpen: false })));
+  check("una cerrada no se reporta como topada", cerrada.clamped === false);
 }
 
 console.log(
