@@ -571,6 +571,18 @@ const defaultSeedAccounts: AccountV2[] = [
     ciudad: "Medellín",
     direccion: "Carrera 48 # 26-85",
     createdAt: new Date().toISOString(),
+  },
+  {
+    id: "acc_demo_kasalab",
+    ownerId: "director_ioncore",
+    razonSocial: "SUMINISTROS DE LABORATORIO KASALAB S.A.S.",
+    nombreComercial: "SUMINISTROS DE LABORATORIO KASALAB S.A.S",
+    nit: "900745087-2",
+    sector: "Lab Terceros",
+    clasificacion: "AAA",
+    ciudad: "Medellín",
+    direccion: "CR 81 B 51 52",
+    createdAt: new Date().toISOString(),
   }
 ];
 
@@ -673,6 +685,11 @@ export function ensureSeedData(): void {
     writeJSON(ACCOUNTS_V2_KEY, defaultSeedAccounts);
     writeJSON(CONTACTS_V2_KEY, defaultSeedContacts);
     writeJSON(OPPORTUNITIES_V2_KEY, defaultSeedOpportunities);
+  } else if (!existingAccounts.some(a => (a.razonSocial || "").toUpperCase().includes("KASALAB") || (a.nombreComercial || "").toUpperCase().includes("KASALAB"))) {
+    const kasalab = defaultSeedAccounts.find(a => a.id === "acc_demo_kasalab");
+    if (kasalab) {
+      writeJSON(ACCOUNTS_V2_KEY, [...existingAccounts, kasalab]);
+    }
   }
 }
 

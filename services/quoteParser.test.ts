@@ -25,6 +25,11 @@ import {
   scoreAliasMatch,
   reviewParsedItem,
   hasPendingReview,
+  parseTabularLine,
+  isTabularLine,
+  parseLocalizedAmount,
+  normalizeSpokenHyphens,
+  phoneticNormalize,
 } from "./quoteParser.ts";
 import type { AccountV2, ContactV2 } from "../types.ts";
 
@@ -520,6 +525,240 @@ console.log("\n12. Revisión por ítem");
   check("sin marcas no bloquea", hasPendingReview({ a: limpio1 }), false);
   check("con marcas bloquea", hasPendingReview({ a: limpio1, b: sinValor }), true);
   check("sin revisiones no bloquea", hasPendingReview(undefined), false);
+}
+
+// --------------------------------------------------------------------------
+// 13. PARSER FORMATO TABULAR (Listas de precios pegadas)
+// --------------------------------------------------------------------------
+
+console.log("\n13. Formato tabular de listas de precios");
+
+{
+  // Caso de prueba obligatorio de 5 líneas:
+  const TABLA_5_LINEAS = [
+    {
+      raw: "01018-22707     PTFE FRITS                                    5    $320.000",
+      code: "01018-22707",
+      desc: "PTFE FRITS",
+      qty: 5,
+      price: 320000,
+    },
+    {
+      raw: "5067-4728       SEAL CAP                                       6    $210.000",
+      code: "5067-4728",
+      desc: "SEAL CAP",
+      qty: 6,
+      price: 210000,
+    },
+    {
+      raw: "5063-6589       PISTON SEALS                                   4    $480.000",
+      code: "5063-6589",
+      desc: "PISTON SEALS",
+      qty: 4,
+      price: 480000,
+    },
+    {
+      raw: "G1313-87201     NEEDLE ASSEMBLY STANDARD AUTO SAMPLER          2    $1.250.000",
+      code: "G1313-87201",
+      desc: "NEEDLE ASSEMBLY STANDARD AUTO SAMPLER",
+      qty: 2,
+      price: 1250000,
+    },
+    {
+      raw: "0101-1416       ROTOR SEAL                                     3    $1.450.000",
+      code: "0101-1416",
+      desc: "ROTOR SEAL",
+      qty: 3,
+      price: 1450000,
+    },
+  ];
+
+  TABLA_5_LINEAS.forEach((item, i) => {
+    const match = parseTabularLine(item.raw);
+    check(`línea ${i + 1} detecta tabular`, isTabularLine(item.raw), true);
+    check(`línea ${i + 1} cantidad exacta (${item.qty})`, match?.quantity, item.qty);
+    check(`línea ${i + 1} valor unitario exacto (${item.price})`, match?.unitPrice, item.price);
+
+    const review = reviewParsedItem(item.raw, {
+      code: item.code,
+      description: item.desc,
+      quantity: match?.quantity || 1,
+      unitPrice: match?.unitPrice || 0,
+    });
+    check(`línea ${i + 1} no genera marcas de revisión ámbar`, review.fields, []);
+  });
+
+  // Variaciones tabulares: sin $, con tabs, con números técnicos en descripción
+  const tabSeparada = parseTabularLine("5067-4728\tSEAL CAP\t6\t210000");
+  check("tabular con tabulador y sin $ lee cantidad", tabSeparada?.quantity, 6);
+  check("tabular con tabulador y sin $ lee valor", tabSeparada?.unitPrice, 210000);
+
+  const conNumerosEnDesc = parseTabularLine("5054105         KIT MAINTENANCE (4500, 5500, 6500)                                             1         $9.800.000");
+  check("tabular con números en descripción lee cantidad 1", conNumerosEnDesc?.quantity, 1);
+  check("tabular con números en descripción lee valor 9.800.000", conNumerosEnDesc?.unitPrice, 9800000);
+
+  const reviewNumerosEnDesc = reviewParsedItem(
+    "5054105         KIT MAINTENANCE (4500, 5500, 6500)                                             1         $9.800.000",
+    {
+      code: "5054105",
+      description: "KIT MAINTENANCE (4500, 5500, 6500)",
+      quantity: 1,
+      unitPrice: 9800000,
+    }
+  );
+  check("números técnicos en descripción tabular no generan falsas alarmas", reviewNumerosEnDesc.fields, []);
+
+  // Formato dictado NO debe ser capturado por parseTabularLine
+  check("caso dictado simple no es tabular", parseTabularLine("código 99 filtro cantidad 2 valor 500"), null);
+  check("caso dictado con 'valor' no es tabular", parseTabularLine("valvula cantidad 5000 valor 300"), null);
+}
+
+// --------------------------------------------------------------------------
+// 14. NORMALIZACIÓN DE GUIONES HABLADOS EN CÓDIGOS
+// --------------------------------------------------------------------------
+{
+  console.log("\n14. Normalización de guiones hablados en códigos");
+
+  // 1. Caso obligatorio: "raya"
+  check(
+    "normaliza 'raya' en código alfanumérico",
+    normalizeSpokenHyphens("cotización código g3188 raya 27502 valvula cantidad 2 valor 1500"),
+    "cotización código g3188-27502 valvula cantidad 2 valor 1500"
+  );
+
+  // 2. Caso obligatorio: "guion"
+  check(
+    "normaliza 'guion' en código alfanumérico",
+    normalizeSpokenHyphens("cotización código g3188 guion 27502 valvula cantidad 2 valor 1500"),
+    "cotización código g3188-27502 valvula cantidad 2 valor 1500"
+  );
+
+  // 3. Caso obligatorio: "guion medio"
+  check(
+    "normaliza 'guion medio' en código alfanumérico",
+    normalizeSpokenHyphens("cotización código g3188 guion medio 27502 valvula cantidad 2 valor 1500"),
+    "cotización código g3188-27502 valvula cantidad 2 valor 1500"
+  );
+
+  // Variaciones adicionales de transcripción
+  check(
+    "normaliza 'guión' con tilde",
+    normalizeSpokenHyphens("código g3188 guión 27502"),
+    "código g3188-27502"
+  );
+
+  check(
+    "normaliza 'guión medio' con tildes",
+    normalizeSpokenHyphens("código g3188 guión medio 27502"),
+    "código g3188-27502"
+  );
+
+  check(
+    "normaliza 'medio guion'",
+    normalizeSpokenHyphens("código g3188 medio guion 27502"),
+    "código g3188-27502"
+  );
+
+  check(
+    "normaliza 'raya al medio'",
+    normalizeSpokenHyphens("código 01018 raya al medio 22707"),
+    "código 01018-22707"
+  );
+
+  check(
+    "normaliza 'signo menos'",
+    normalizeSpokenHyphens("código g3188 signo menos 27502"),
+    "código g3188-27502"
+  );
+
+  check(
+    "normaliza 'menos' entre código y números",
+    normalizeSpokenHyphens("código g3188 menos 27502"),
+    "código g3188-27502"
+  );
+
+  // No debe romper frases normales con 'menos'
+  check(
+    "no altera 'menos' en frases normales",
+    normalizeSpokenHyphens("valvula de 5 pulgadas más o menos para agua"),
+    "valvula de 5 pulgadas más o menos para agua"
+  );
+
+  // No altera dictados normales ni tablas con guion literal
+  check(
+    "no altera dictado normal sin palabras de guion",
+    normalizeSpokenHyphens("código 99 filtro cantidad 2 valor 500"),
+    "código 99 filtro cantidad 2 valor 500"
+  );
+
+  check(
+    "no altera guion literal existente",
+    normalizeSpokenHyphens("G1313-87201 NEEDLE ASSEMBLY 2 $1.250.000"),
+    "G1313-87201 NEEDLE ASSEMBLY 2 $1.250.000"
+  );
+}
+
+// --------------------------------------------------------------------------
+// 15. NORMALIZACIÓN FONÉTICA DE NOMBRES (Empresas y Contactos)
+// --------------------------------------------------------------------------
+{
+  console.log("\n15. Normalización fonética de nombres");
+
+  // Pruebas directas de equivalencias fonéticas en español
+  check("fonética 'c' vs 'k'", phoneticNormalize("casalab"), "kasalab");
+  check("fonética 'k'", phoneticNormalize("kasalab"), "kasalab");
+  check("fonética 'z' vs 's'", phoneticNormalize("kazalab"), "kasalab");
+  check("fonética 'qu' vs 'k'", phoneticNormalize("queso"), "keso");
+  check("fonética 'b' vs 'v'", phoneticNormalize("vaca"), "baka");
+  check("fonética 'll' vs 'y'", phoneticNormalize("ceballos"), "sebayos");
+  check("fonética 'h' muda", phoneticNormalize("hipico"), "ipiko");
+
+  // Cuenta real del caso de prueba
+  const kasalabAccount = acc(
+    "acc_kasalab",
+    "SUMINISTROS DE LABORATORIO KASALAB S.A.S",
+    "SUMINISTROS DE LABORATORIO KASALAB S.A.S."
+  );
+  const testAccounts = [...ACCOUNTS, kasalabAccount];
+
+  // Caso 1: dictado con "casalab"
+  const parseCasalab = parseQuoteHeader(
+    "cotización casalab código 45 filtro cantidad 1 valor 100",
+    testAccounts,
+    CONTACTS
+  );
+  check("caso 'casalab' detecta Kasalab", parseCasalab.account.match?.id, "acc_kasalab");
+  check("caso 'casalab' tiene confianza alta", parseCasalab.account.confidence, "alta");
+  check("caso 'casalab' sin avisos de empresa faltante", parseCasalab.warnings, []);
+
+  // Caso 2: dictado con "kasalab"
+  const parseKasalab = parseQuoteHeader(
+    "cotización kasalab código 45 filtro cantidad 1 valor 100",
+    testAccounts,
+    CONTACTS
+  );
+  check("caso 'kasalab' detecta Kasalab", parseKasalab.account.match?.id, "acc_kasalab");
+  check("caso 'kasalab' tiene confianza alta", parseKasalab.account.confidence, "alta");
+  check("caso 'kasalab' sin avisos de empresa faltante", parseKasalab.warnings, []);
+
+  // Caso 3: dictado con "kazalab"
+  const parseKazalab = parseQuoteHeader(
+    "cotización kazalab código 45 filtro cantidad 1 valor 100",
+    testAccounts,
+    CONTACTS
+  );
+  check("caso 'kazalab' detecta Kasalab", parseKazalab.account.match?.id, "acc_kasalab");
+  check("caso 'kazalab' tiene confianza alta", parseKazalab.account.confidence, "alta");
+  check("caso 'kazalab' sin avisos de empresa faltante", parseKazalab.warnings, []);
+
+  // Caso negativo: empresa que NO existe ni fonéticamente
+  const parseDesconocida = parseQuoteHeader(
+    "cotización distribuidora inventada xyz código 45 filtro cantidad 1 valor 100",
+    testAccounts,
+    CONTACTS
+  );
+  check("empresa desconocida no fuerza coincidencia", parseDesconocida.account.match, undefined);
+  check("empresa desconocida tiene aviso", parseDesconocida.warnings.length > 0, true);
 }
 
 // --------------------------------------------------------------------------

@@ -41,6 +41,10 @@ import {
   cleanItemDescription,
   reviewParsedItem,
   hasPendingReview,
+  parseTabularLine,
+  isTabularLine,
+  parseLocalizedAmount,
+  normalizeSpokenHyphens,
   type HeaderNames,
   type ItemReview,
   type ItemReviewField
@@ -101,7 +105,7 @@ const numberWordsToDigits = (text: string) => {
 };
 
 const normalizeSpokenMoneyAndCodes = (text: string) => {
-  return numberWordsToDigits(text)
+  return normalizeSpokenHyphens(numberWordsToDigits(text))
     .replace(/\bvalo\s+r\b/gi, "valor")
     .replace(/\bpre\s+cio\b/gi, "precio")
     .replace(/\bc[oó]\s+digo\b/gi, "codigo")
@@ -356,6 +360,11 @@ const detectValidityFromPrompt = (text: string) => {
 };
 
 const extractQuantity = (text: string) => {
+  const tabular = parseTabularLine(text);
+  if (tabular) {
+    return tabular.quantity;
+  }
+
   const cleaned = normalizeSpokenMoneyAndCodes(text);
 
   const match =
@@ -414,69 +423,13 @@ const extractCode = (text: string) => {
   return "";
 };
 
-const parseLocalizedAmount = (rawValue: string) => {
-  let value = (rawValue || "").trim();
-
-  value = value.replace(/[^\d.,]/g, "");
-
-  if (!value) return 0;
-
-  const hasDot = value.includes(".");
-  const hasComma = value.includes(",");
-
-  if (hasDot && hasComma) {
-    const lastDot = value.lastIndexOf(".");
-    const lastComma = value.lastIndexOf(",");
-
-    if (lastComma > lastDot) {
-      value = value.replace(/\./g, "").replace(",", ".");
-    } else {
-      value = value.replace(/,/g, "");
-    }
-
-    const result = Number(value);
-    return Number.isNaN(result) ? 0 : result;
-  }
-
-  if (hasComma) {
-    const parts = value.split(",");
-    const lastPart = parts[parts.length - 1];
-
-    const looksLikeThousands =
-      parts.length > 2 ||
-      (parts.length === 2 && lastPart.length === 3 && parts[0].length <= 3);
-
-    if (looksLikeThousands) {
-      value = value.replace(/,/g, "");
-    } else {
-      value = value.replace(",", ".");
-    }
-
-    const result = Number(value);
-    return Number.isNaN(result) ? 0 : result;
-  }
-
-  if (hasDot) {
-    const parts = value.split(".");
-    const lastPart = parts[parts.length - 1];
-
-    const looksLikeThousands =
-      parts.length > 2 ||
-      (parts.length === 2 && lastPart.length === 3 && parts[0].length <= 3);
-
-    if (looksLikeThousands) {
-      value = value.replace(/\./g, "");
-    }
-
-    const result = Number(value);
-    return Number.isNaN(result) ? 0 : result;
-  }
-
-  const result = Number(value);
-  return Number.isNaN(result) ? 0 : result;
-};
 
 const extractUnitPrice = (text: string, qty?: number, code?: string) => {
+  const tabular = parseTabularLine(text);
+  if (tabular) {
+    return tabular.unitPrice;
+  }
+
   let cleaned = normalizeSpokenMoneyAndCodes(text)
     .replace(/^\d+[\).]\s*/i, "")
     .trim();
@@ -541,6 +494,8 @@ const isHeaderOrCurrencyLine = (line: string) => {
   if (/^moneda\b/.test(n)) return true;
   if (/^cliente\b/.test(n)) return true;
   if (/^contacto\b/.test(n)) return true;
+  if (/^c[oó]digo\s+(?:descripci[oó]n|detalle|producto|item)/i.test(n)) return true;
+  if (/^(?:item|pos)\s+(?:c[oó]digo|descripci[oó]n)/i.test(n)) return true;
   return false;
 };
 
@@ -581,7 +536,7 @@ const isValidParsedItem = (item: QuoteItem) => {
 };
 
 const splitItemsFromPrompt = (text: string) => {
-  const raw = (text || "").trim();
+  const raw = normalizeSpokenHyphens((text || "").trim());
   if (!raw) return [];
 
   // 1. Si el texto tiene líneas numeradas explícitas (ej: "1) ... 2) ... 3) ...")
@@ -660,7 +615,10 @@ const extractDescription = (
   contact?: ContactV2,
   itemCode?: string
 ) => {
-  let cleaned = normalizeSpokenMoneyAndCodes(text);
+  const tabular = parseTabularLine(text);
+  const targetText = tabular ? tabular.rawCodeAndDesc : text;
+
+  let cleaned = normalizeSpokenMoneyAndCodes(targetText);
 
   cleaned = cleanKnownBusinessWords(cleaned);
 

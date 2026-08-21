@@ -96,6 +96,57 @@ export const normalize = (value: string): string =>
     .trim();
 
 /**
+ * Normalización fonética en español para comparar nombres de empresas y contactos.
+ * Unifica grafías con sonidos equivalentes en el español de Colombia / Latinoamérica:
+ * - 'c' (ante a, o, u o consonantes), 'k', 'qu' (ante e, i) -> 'k' (ej: "casalab", "kasalab", "queso")
+ * - 'c' (ante e, i), 'z', 's' -> 's' (seseo: ej: "casa"/"caza", "cesar"/"sesar")
+ * - 'b', 'v', 'w' -> 'b' (ej: "vaca"/"baca")
+ * - 'll', 'y' -> 'y'
+ * - 'h' muda (salvo 'ch') -> eliminada (ej: "hola"/"ola", "hipico"/"ipico")
+ * - colapso de consonantes dobles o repetidas -> simples (ej: 'ss' -> 's', 'nn' -> 'n')
+ */
+export const phoneticNormalize = (value: string): string => {
+  let str = normalize(value);
+  if (!str) return "";
+
+  // 1. Proteger dígrafo 'ch'
+  str = str.replace(/ch/g, "§ch§");
+
+  // 2. Eliminar 'h' muda
+  str = str.replace(/h/g, "");
+
+  // 3. Restaurar 'ch'
+  str = str.replace(/§ch§/g, "ch");
+
+  // 4. 'b', 'v', 'w' -> 'b'
+  str = str.replace(/[vw]/g, "b");
+
+  // 5. 'll' -> 'y'
+  str = str.replace(/ll/g, "y");
+
+  // 6. 'qu' (ante e, i) y 'q' -> 'k'
+  str = str.replace(/qu(?=[ei])/g, "k");
+  str = str.replace(/q/g, "k");
+
+  // 7. 'c' ante 'e', 'i' -> 's' (seseo)
+  str = str.replace(/c(?=[ei])/g, "s");
+
+  // 8. 'c' restante (ante a, o, u o consonante o fin de palabra) -> 'k'
+  str = str.replace(/c/g, "k");
+
+  // 9. 'z' -> 's' (seseo)
+  str = str.replace(/z/g, "s");
+
+  // 10. 'x' -> 'ks'
+  str = str.replace(/x/g, "ks");
+
+  // 11. Colapso de consonantes dobles consecutivas
+  str = str.replace(/([b-df-hj-np-tv-z])\1+/g, "$1");
+
+  return str.replace(/\s+/g, " ").trim();
+};
+
+/**
  * Formas societarias colombianas. Se ignoran al comparar nombres porque
  * "Analtec SAS" y "Analtec S.A.S." son la misma empresa, pero también sirven
  * de ANCLA para separar la empresa del contacto: en "empresa de prueba sas
@@ -285,8 +336,171 @@ const buildInitials = (value: string): string =>
     .map((part) => part[0])
     .join("");
 
+/**
+ * Normaliza transcripciones de reconocimiento de voz donde el usuario dicta un guion
+ * en un código (ej: "G3188 raya 27502", "G3188 guion medio 27502", "G3188 guión 27502").
+ * Convierte las palabras habladas de guion en '-' uniendo las partes del código sin espacios.
+ */
+export const normalizeSpokenHyphens = (text: string): string => {
+  if (!text) return "";
+  let res = text;
+  let prev = "";
+
+  while (res !== prev) {
+    prev = res;
+    // 1. Frases compuestas: "raya al medio", "guion medio", "medio guion", "signo menos"
+    res = res.replace(
+      /([a-zA-Z0-9_\-]+)\s*(?:raya\s+al\s+medio|gu[ií][oó]n\s+medio|medio\s+gu[ií][oó]n|signo\s+menos)\s*([a-zA-Z0-9_\-]+)/gi,
+      "$1-$2"
+    );
+
+    // 2. Palabras simples: "raya", "guion", "guión"
+    res = res.replace(
+      /([a-zA-Z0-9_\-]+)\s*(?:gu[ií][oó]n|raya)\s*([a-zA-Z0-9_\-]+)/gi,
+      "$1-$2"
+    );
+
+    // 3. "menos" únicamente entre partes de código con números (ej: alfanumérico + menos + dígitos)
+    res = res.replace(
+      /(\b[a-zA-Z0-9_\-]*\d[a-zA-Z0-9_\-]*|\b[a-zA-Z]+\d+)\s+menos\s+(\d+[a-zA-Z0-9_\-]*\b)/gi,
+      "$1-$2"
+    );
+  }
+
+  return res;
+};
+
 // ==========================================================================
-// 1. AISLAR EL ENCABEZADO (lo que viene antes del primer ítem)
+// 1. PARSER TABULAR (Listas de precios pegadas en columnas)
+// ==========================================================================
+
+export interface TabularLineMatch {
+  rawCodeAndDesc: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+/**
+ * Convierte una cadena de monto con formato localizado ($320.000, 210,000, 1.250.000, etc.)
+ * a número JavaScript limpio.
+ */
+export const parseLocalizedAmount = (rawValue: string): number => {
+  let value = (rawValue || "").trim();
+  value = value.replace(/[^\d.,]/g, "");
+  if (!value) return 0;
+
+  const hasDot = value.includes(".");
+  const hasComma = value.includes(",");
+
+  if (hasDot && hasComma) {
+    const lastDot = value.lastIndexOf(".");
+    const lastComma = value.lastIndexOf(",");
+
+    if (lastComma > lastDot) {
+      value = value.replace(/\./g, "").replace(",", ".");
+    } else {
+      value = value.replace(/,/g, "");
+    }
+
+    const result = Number(value);
+    return Number.isNaN(result) ? 0 : result;
+  }
+
+  if (hasComma) {
+    const parts = value.split(",");
+    const lastPart = parts[parts.length - 1];
+
+    const looksLikeThousands =
+      parts.length > 2 ||
+      (parts.length === 2 && lastPart.length === 3 && parts[0].length <= 3);
+
+    if (looksLikeThousands) {
+      value = value.replace(/,/g, "");
+    } else {
+      value = value.replace(",", ".");
+    }
+
+    const result = Number(value);
+    return Number.isNaN(result) ? 0 : result;
+  }
+
+  if (hasDot) {
+    const parts = value.split(".");
+    const lastPart = parts[parts.length - 1];
+
+    const looksLikeThousands =
+      parts.length > 2 ||
+      (parts.length === 2 && lastPart.length === 3 && parts[0].length <= 3);
+
+    if (looksLikeThousands) {
+      value = value.replace(/\./g, "");
+    } else {
+      value = value.replace(",", ".");
+    }
+
+    const result = Number(value);
+    return Number.isNaN(result) ? 0 : result;
+  }
+
+  const result = Number(value);
+  return Number.isNaN(result) ? 0 : result;
+};
+
+/**
+ * Palabras que indican formato dictado / hablado con etiquetas explícitas.
+ * Si están presentes, NO se trata como formato tabular puro.
+ */
+const DICTATED_KEYWORDS = /\b(cantidad|cant|valor|precio|c\/u|unitario|cuesta|vale)\b/i;
+
+/**
+ * Patrón de fin de línea tabular:
+ * [separador espacio/tab] [número cantidad (1-6 dígitos)] [separador espacio/tab] [valor monetario] [posible moneda al final]
+ */
+const TABULAR_ROW_END =
+  /(?:^|[ \t]+)(\d{1,6})[ \t]+(?:\$|us\$|usd|cop|\$)?\s*([\d.,]+)\s*(?:usd|cop|pesos|colombianos|dolares|dólares)?\s*$/i;
+
+/**
+ * Detecta si una línea corresponde al formato tabular de lista de precios pegada
+ * (ej: "01018-22707   PTFE FRITS   5   $320.000" o "5067-4728 SEAL CAP 6 210000").
+ */
+export const parseTabularLine = (line: string): TabularLineMatch | null => {
+  const clean = (line || "").trim();
+  if (!clean) return null;
+
+  // Si tiene palabras dictadas explícitas ("cantidad", "valor", etc.), usar parser dictado.
+  if (DICTATED_KEYWORDS.test(clean)) return null;
+
+  // Limpiar pipes iniciales/finales de tablas markdown si los hubiera
+  const row = clean.replace(/^\||\|$/g, "").trim();
+
+  const match = row.match(TABULAR_ROW_END);
+  if (!match || match.index === undefined) return null;
+
+  const rawQty = match[1];
+  const rawPrice = match[2];
+
+  const qty = parseInt(rawQty, 10);
+  const price = parseLocalizedAmount(rawPrice);
+
+  if (Number.isNaN(qty) || qty <= 0) return null;
+  if (Number.isNaN(price) || price <= 0) return null;
+
+  const rawCodeAndDesc = row.slice(0, match.index).trim();
+  if (!rawCodeAndDesc) return null;
+
+  return {
+    rawCodeAndDesc,
+    quantity: qty,
+    unitPrice: price,
+  };
+};
+
+export const isTabularLine = (line: string): boolean => {
+  return parseTabularLine(line) !== null;
+};
+
+// ==========================================================================
+// 2. AISLAR EL ENCABEZADO (lo que viene antes del primer ítem)
 // ==========================================================================
 
 /**
@@ -298,8 +512,34 @@ const ITEM_START = /\b(c[oó]d(?:ig[oó])?|[ií]tem|referencia|ref)\b|(?:^|\n)\s
 export const extractHeader = (prompt: string): string => {
   const text = (prompt || "").trim();
   if (!text) return "";
-  const m = text.match(ITEM_START);
-  const cut = m && m.index !== undefined ? text.slice(0, m.index) : text;
+
+  // Si alguna línea es tabular o encabezado de tabla, el encabezado termina antes
+  const lines = text.split("\n");
+  let cutIndex = -1;
+  let runningIndex = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      runningIndex += line.length + 1;
+      continue;
+    }
+    const norm = normalize(trimmed);
+    const isTableHeader =
+      /^c[oó]digo\s+(?:descripci[oó]n|detalle|producto|item)/i.test(norm) ||
+      /^(?:item|pos)\s+(?:c[oó]digo|descripci[oó]n)/i.test(norm);
+
+    if (isTabularLine(trimmed) || isTableHeader) {
+      cutIndex = runningIndex;
+      break;
+    }
+    runningIndex += line.length + 1;
+  }
+
+  let cutText = cutIndex !== -1 ? text.slice(0, cutIndex) : text;
+
+  const m = cutText.match(ITEM_START);
+  const cut = m && m.index !== undefined ? cutText.slice(0, m.index) : cutText;
   return cut.trim();
 };
 
@@ -504,11 +744,16 @@ export const scoreNameMatch = (candidate: string, target: string): number => {
   const cBare = stripLegalSuffix(c);
   const tBare = stripLegalSuffix(t);
 
-  // Igualdad (ignorando la forma societaria).
+  // Igualdad exacta (ignorando la forma societaria).
   if (cBare && cBare === tBare) return 1000;
   if (c === t) return 1000;
 
-  // Una contiene a la otra como frase completa.
+  // Equivalencia fonética completa (ej: "casalab" vs "kasalab", "kazalab" vs "kasalab")
+  const cPhon = stripLegalSuffix(phoneticNormalize(candidate));
+  const tPhon = stripLegalSuffix(phoneticNormalize(target));
+  if (cPhon && tPhon && cPhon === tPhon) return 980;
+
+  // Una contiene a la otra como frase completa (literal o fonética).
   //
   // La contención solo vale si lo contenido identifica algo por sí mismo:
   // "analtec" dentro de "analtec laboratorios" sí; "servicios" dentro de
@@ -520,21 +765,37 @@ export const scoreNameMatch = (candidate: string, target: string): number => {
     return true;
   };
 
-  if (tBare.length >= 4 && identifies(tBare) && containsWholeWord(cBare, tBare)) {
+  if (
+    tBare.length >= 4 &&
+    identifies(tBare) &&
+    (containsWholeWord(cBare, tBare) || (tPhon.length >= 4 && containsWholeWord(cPhon, tPhon)))
+  ) {
     return 700 + tBare.length;
   }
-  if (cBare.length >= 4 && identifies(cBare) && containsWholeWord(tBare, cBare)) {
+  if (
+    cBare.length >= 4 &&
+    identifies(cBare) &&
+    (containsWholeWord(tBare, cBare) || (cPhon.length >= 4 && containsWholeWord(tPhon, cPhon)))
+  ) {
     return 640 + cBare.length;
   }
 
-  // Solapamiento de palabras significativas.
+  // Solapamiento de palabras significativas (con soporte fonético).
   const targetWords = significantWords(t);
   const candidateWords = significantWords(c);
   if (targetWords.length === 0 || candidateWords.length === 0) return 0;
 
-  const matched = targetWords.filter((w) =>
-    candidateWords.some((cw) => cw === w || (w.length > 4 && cw.startsWith(w)))
-  );
+  const matched = targetWords.filter((w) => {
+    const wPhon = phoneticNormalize(w);
+    return candidateWords.some((cw) => {
+      if (cw === w) return true;
+      const cwPhon = phoneticNormalize(cw);
+      if (cwPhon === wPhon) return true;
+      if (w.length > 4 && cw.startsWith(w)) return true;
+      if (wPhon.length > 4 && cwPhon.startsWith(wPhon)) return true;
+      return false;
+    });
+  });
 
   if (matched.length === 0) return 0;
 
@@ -626,14 +887,22 @@ export const scoreAliasMatch = (
 ): number => {
   const c = collapseAcronymDots(candidate);
   if (c.length < MIN_ALIAS_LENGTH) return 0;
+  const cPhon = phoneticNormalize(c);
 
   let best = 0;
   for (const alias of aliases) {
-    if (c === alias) {
+    const aPhon = phoneticNormalize(alias);
+    if (c === alias || (cPhon && aPhon && cPhon === aPhon)) {
       best = Math.max(best, 950);
       continue;
     }
-    if (containsWholeWord(c, alias) || containsWholeWord(alias, c)) {
+    if (
+      containsWholeWord(c, alias) ||
+      containsWholeWord(alias, c) ||
+      (cPhon.length >= MIN_ALIAS_LENGTH &&
+        aPhon.length >= MIN_ALIAS_LENGTH &&
+        (containsWholeWord(cPhon, aPhon) || containsWholeWord(aPhon, cPhon)))
+    ) {
       best = Math.max(best, 900);
     }
   }
@@ -1004,8 +1273,10 @@ export const parseQuoteHeader = (
   return { ...names, account, contact, currency, warnings };
 };
 
+
+
 // ==========================================================================
-// 7. REVISIÓN POR ÍTEM (punto 6)
+// 8. REVISIÓN POR ÍTEM (punto 6)
 // ==========================================================================
 //
 // El parser puede equivocarse al leer una cantidad o un valor —por ruido en
@@ -1085,6 +1356,8 @@ export const reviewParsedItem = (
     }
   };
 
+  const isTabular = isTabularLine(text);
+
   // --- Cantidad ---
   const qty = Number(item.quantity);
   if (!Number.isFinite(qty) || qty <= 0) {
@@ -1093,7 +1366,7 @@ export const reviewParsedItem = (
     flag("cantidad", `Cantidad con decimales (${qty}). Confirma el número.`);
   } else if (qty > 999) {
     flag("cantidad", `Cantidad inusualmente alta (${qty}). Confirma el número.`);
-  } else if (!EXPLICIT_QUANTITY.test(text)) {
+  } else if (!isTabular && !EXPLICIT_QUANTITY.test(text)) {
     flag(
       "cantidad",
       "No se dictó una cantidad; se asumió 1. Confirma si es correcta."
@@ -1105,7 +1378,7 @@ export const reviewParsedItem = (
   if (!Number.isFinite(price) || price <= 0) {
     flag(
       "valor",
-      VALUE_MENTIONED.test(text)
+      (VALUE_MENTIONED.test(text) || isTabular)
         ? "Se mencionó un valor pero no se pudo leer."
         : "No se dictó un valor unitario."
     );
