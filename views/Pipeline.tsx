@@ -41,7 +41,12 @@ import {
   Pencil,
   Printer,
   Copy,
-  Percent
+  Percent,
+  CalendarPlus,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -68,6 +73,8 @@ import {
   createOpportunity,
   listQuotesByUser,
   listActivitiesByUser,
+  createActivity,
+  completeFollowUpActivity,
   getTRM
 } from '../services/storage';
 
@@ -91,6 +98,19 @@ import {
   type OpportunityContext
 } from '../services/opportunityContext';
 import { requestQuoteAction } from '../services/quoteNavigation';
+
+// La bitácora se dibuja con el mismo componente que usa el historial de
+// contactos, y las reglas del formulario (fechas, validaciones) viven en un
+// módulo puro que se prueba en Node.
+import ActivityTimeline from '../components/ActivityTimeline';
+import {
+  ACTIVITY_TYPES,
+  FOLLOW_UP_PRESETS,
+  FOLLOW_UP_TYPE,
+  presetDatetimeValue,
+  validateActivityDraft,
+  type ActivityDraft
+} from '../services/activityDraft';
 
 // --- Components ---
 
@@ -415,6 +435,20 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
   const [lostNotes, setLostNotes] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  // Registro de gestiones desde el panel (Fase C).
+  //
+  // `requireFollowUp` distingue los dos botones: "Registrar gestión" guarda algo
+  // que YA pasó y la fecha es opcional; "+ Crear seguimiento" agenda algo futuro
+  // y sin fecha no tiene sentido. Es el mismo formulario porque en la práctica
+  // el asesor escribe lo que pasó y de una vez agenda el siguiente paso; obligar
+  // a llenar dos formularios haría que no agende nada.
+  const emptyDraft: ActivityDraft = { type: "Llamada", description: "", followUpLocal: "" };
+  const [activityDraft, setActivityDraft] = useState<ActivityDraft>(emptyDraft);
+  const [isActivityFormOpen, setIsActivityFormOpen] = useState(false);
+  const [requireFollowUp, setRequireFollowUp] = useState(false);
+  const [activityError, setActivityError] = useState("");
+  const [showAllActivities, setShowAllActivities] = useState(false);
+
   // Alta de oportunidad desde el propio embudo. El botón "NUEVO" existía pero
   // su onClick estaba vacío (`// handle create new`): se veía habilitado, se
   // podía hacer clic y no pasaba absolutamente nada.
@@ -677,6 +711,204 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
     setIsDrawerOpen(false);
   };
 
+  // ── Bitácora desde el panel (Fase C) ──────────────────────────────────────
+
+  /**
+   * Abre el panel dejando el formulario en blanco.
+   *
+   * El borrador se resetea aquí y no al cerrar: si el asesor cierra sin querer,
+   * al volver a abrir la MISMA oportunidad recupera lo que escribió. Lo que no
+   * puede pasar es que ese texto viaje a otro negocio.
+   */
+  const openOpportunityPanel = (opp: OpportunityV2) => {
+    // La comparación va fuera del updater de setSelectedOpp: un updater debe ser
+    // una función pura y React puede llamarlo dos veces en StrictMode. Con los
+    // setState adentro, el reseteo se ejecutaría de forma impredecible.
+    if (selectedOpp?.id !== opp.id) {
+      setActivityDraft(emptyDraft);
+      setIsActivityFormOpen(false);
+      setRequireFollowUp(false);
+      setActivityError("");
+      setShowAllActivities(false);
+    }
+    setSelectedOpp(opp);
+    setIsDrawerOpen(true);
+  };
+
+  const openActivityForm = (asFollowUp: boolean) => {
+    setRequireFollowUp(asFollowUp);
+    setActivityError("");
+    setActivityDraft(prev => ({
+      ...prev,
+      // "+ Crear seguimiento" propone mañana a las 9:00 en vez de dejar el campo
+      // vacío. Con el campo vacío hay que abrir el selector de fecha para hacer
+      // lo más común, y ese roce es justo lo que hace que nadie agende nada.
+      followUpLocal: asFollowUp && !prev.followUpLocal ? presetDatetimeValue("manana") : prev.followUpLocal,
+      type: asFollowUp ? FOLLOW_UP_TYPE : (prev.type === FOLLOW_UP_TYPE ? "Llamada" : prev.type),
+    }));
+    setIsActivityFormOpen(true);
+  };
+
+  /**
+   * Guarda la gestión en la MISMA bitácora que leen Contactos, AXIS y el
+   * Dashboard (crm_activities_v2 vía createActivity). No hay un historial
+   * paralelo del embudo.
+   *
+   * La novedad es `opportunityId`: hasta ahora una actividad solo sabía de qué
+   * empresa y contacto era, así que el embudo tenía que adivinar a qué negocio
+   * pertenecía. Lo que se registre desde acá queda atado sin ambigüedad, y una
+   * empresa con dos negocios abiertos deja de mezclar historiales.
+   */
+  const handleSaveActivity = () => {
+    if (!selectedOpp) return;
+
+    const result = validateActivityDraft(activityDraft, { requireFollowUp });
+    if (!result.ok) {
+      setActivityError(result.error);
+      return;
+    }
+
+    // createActivity rechaza actividades sin cuenta (quedarían huérfanas). El
+    // contexto resuelve la empresa incluso cuando la oportunidad tiene el campo
+    // vacío pero su cotización sí la conoce; si ni así aparece, se avisa en vez
+    // de dejar que reviente.
+    const accountId = selectedCtx?.account?.id || selectedOpp.accountId;
+    if (!accountId) {
+      setActivityError("Esta oportunidad no tiene empresa asociada, así que la gestión quedaría huérfana.");
+      return;
+    }
+
+    try {
+      createActivity({
+        accountId,
+        contactId: selectedCtx?.contact?.id || selectedOpp.contactId,
+        opportunityId: selectedOpp.id,
+        type: result.type,
+        description: result.description,
+        followUpAt: result.followUpAt,
+      });
+    } catch (err: any) {
+      setActivityError(err?.message || "No se pudo registrar la gestión.");
+      return;
+    }
+
+    setActivityDraft(emptyDraft);
+    setIsActivityFormOpen(false);
+    setRequireFollowUp(false);
+    setActivityError("");
+    setRefresh(prev => prev + 1);
+  };
+
+  /**
+   * Cierra el seguimiento pendiente.
+   *
+   * Se usa completeFollowUpActivity, que marca la actividad existente como
+   * completada en lugar de crear una nueva. Así el historial no se duplica y la
+   * alerta de "seguimiento vencido" desaparece sola, porque sale del mismo dato.
+   */
+  const handleCompleteNextAction = (activityId: string) => {
+    completeFollowUpActivity(activityId);
+    setRefresh(prev => prev + 1);
+  };
+
+  /**
+   * El formulario es uno solo, dibujado desde una función.
+   *
+   * Se muestra debajo de PRÓXIMA ACCIÓN o debajo de ACTIVIDAD según qué botón
+   * lo abrió, pero nunca los dos a la vez. Escribirlo dos veces en el JSX
+   * significaría que un cambio de validación o de estilo hay que hacerlo por
+   * duplicado, y tarde o temprano uno de los dos se queda atrás.
+   */
+  const renderActivityForm = () => (
+    <div className="mt-3 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+      {!requireFollowUp && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {ACTIVITY_TYPES.map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setActivityDraft(d => ({ ...d, type: t }))}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                activityDraft.type === t
+                  ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <textarea
+        value={activityDraft.description}
+        onChange={(e) => setActivityDraft(d => ({ ...d, description: e.target.value }))}
+        rows={3}
+        placeholder={requireFollowUp
+          ? 'Qué hay que hacer. Ej: llamar para confirmar si revisaron la cotización.'
+          : 'Qué pasó. Ej: se envió la cotización y quedaron de responder el lunes.'}
+        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
+      />
+
+      <div className="mt-3">
+        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1.5">
+          {requireFollowUp ? 'Fecha del seguimiento' : 'Agendar seguimiento (opcional)'}
+        </span>
+        <input
+          type="datetime-local"
+          value={activityDraft.followUpLocal}
+          onChange={(e) => setActivityDraft(d => ({ ...d, followUpLocal: e.target.value }))}
+          className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/20"
+        />
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {FOLLOW_UP_PRESETS.map(p => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setActivityDraft(d => ({ ...d, followUpLocal: presetDatetimeValue(p.key) }))}
+              className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-600 transition-colors"
+            >
+              {p.label}
+            </button>
+          ))}
+          {activityDraft.followUpLocal && !requireFollowUp && (
+            <button
+              type="button"
+              onClick={() => setActivityDraft(d => ({ ...d, followUpLocal: '' }))}
+              className="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-400 hover:text-rose-500 transition-colors"
+            >
+              Quitar fecha
+            </button>
+          )}
+        </div>
+      </div>
+
+      {activityError && (
+        <div className="mt-3 flex items-start gap-2 text-xs font-semibold text-rose-600">
+          <AlertCircle size={14} className="shrink-0 mt-0.5" />
+          <span>{activityError}</span>
+        </div>
+      )}
+
+      <div className="mt-4 flex gap-2">
+        <button
+          type="button"
+          onClick={handleSaveActivity}
+          className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+        >
+          {requireFollowUp ? 'Agendar' : 'Guardar gestión'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setIsActivityFormOpen(false); setActivityError(''); }}
+          className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+
   // Solo los contactos de la cuenta elegida: ofrecer todos permitiría guardar
   // una oportunidad cuyo contacto pertenece a otra empresa.
   const newOppContacts = useMemo(
@@ -819,10 +1051,7 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
               stage={stage}
               opportunities={filteredOpportunities.filter(o => o.etapa === stage.name)}
               contextMap={contextMap}
-              onCardClick={(opp) => {
-                setSelectedOpp(opp);
-                setIsDrawerOpen(true);
-              }}
+              onCardClick={openOpportunityPanel}
               onDeleteCard={handleDeleteOpp}
               stageMetrics={stageMetricsMap.get(stage.name)}
             />
@@ -1111,8 +1340,155 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
                 )}
               </div>
 
+              {/* ── PRÓXIMA ACCIÓN ─────────────────────────────────────────
+                  Va ANTES del historial a propósito. La bitácora puede tener
+                  treinta gestiones; lo único que el asesor tiene que decidir al
+                  abrir el panel es qué hace ahora. Si eso queda debajo de una
+                  lista larga, deja de leerse.
+
+                  El dato sale de opportunityContext.nextActionOf(), que elige el
+                  seguimiento pendiente de fecha MÁS ANTIGUA: si hay uno vencido
+                  y otro para mañana, lo urgente es el vencido. */}
+              <div className="mt-6">
+                <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-3">
+                  Próxima acción
+                </label>
+
+                {!selectedCtx?.nextAction ? (
+                  <div className="p-4 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 text-sm text-slate-400 flex items-center gap-2">
+                    <Bell size={16} className="shrink-0" />
+                    No hay una próxima acción programada.
+                  </div>
+                ) : (
+                  <div
+                    className={`p-4 rounded-2xl border ${
+                      selectedCtx.nextAction.state === 'vencido'
+                        ? 'bg-rose-50/70 dark:bg-rose-900/10 border-rose-200 dark:border-rose-900/40'
+                        : selectedCtx.nextAction.state === 'hoy'
+                          ? 'bg-amber-50/70 dark:bg-amber-900/10 border-amber-200 dark:border-amber-900/40'
+                          : 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-900/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                        {selectedCtx.nextAction.type}
+                      </span>
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          selectedCtx.nextAction.state === 'vencido'
+                            ? 'bg-rose-100 text-rose-700'
+                            : selectedCtx.nextAction.state === 'hoy'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                        }`}
+                      >
+                        {selectedCtx.nextAction.label}
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-slate-700 dark:text-slate-300 break-words whitespace-pre-line">
+                      {selectedCtx.nextAction.description || 'Sin descripción.'}
+                    </p>
+
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <Clock size={12} className="shrink-0" />
+                      {new Date(selectedCtx.nextAction.at).toLocaleString('es-CO', {
+                        day: '2-digit', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteNextAction(selectedCtx.nextAction!.activityId)}
+                      className="mt-3 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-emerald-400 hover:text-emerald-600 transition-colors"
+                    >
+                      <Check size={14} /> Marcar como realizada
+                    </button>
+                  </div>
+                )}
+
+                {!(isActivityFormOpen && requireFollowUp) && (
+                  <button
+                    type="button"
+                    onClick={() => openActivityForm(true)}
+                    className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                  >
+                    <CalendarPlus size={14} /> Crear seguimiento
+                  </button>
+                )}
+
+                {isActivityFormOpen && requireFollowUp && renderActivityForm()}
+              </div>
+
+              {/* ── ACTIVIDAD ──────────────────────────────────────────────
+                  Es la MISMA bitácora de Contactos y AXIS (crm_activities_v2),
+                  filtrada por oportunidad. No hay un historial propio del
+                  embudo: lo que se registre acá aparece en las otras pantallas
+                  y al revés.
+
+                  Se muestran las 5 más recientes. Una oportunidad vieja puede
+                  tener decenas y el panel se volvería una lista infinita en la
+                  que lo importante (cotización, próxima acción) queda arriba y
+                  perdido. */}
+              <div className="mt-6">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest">
+                    Actividad
+                  </label>
+                  {selectedCtx && selectedCtx.activities.length > 0 && (
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      {selectedCtx.activities.length}{' '}
+                      {selectedCtx.activities.length === 1 ? 'gestión' : 'gestiones'}
+                      {typeof selectedCtx.daysSinceLastActivity === 'number' && (
+                        <>
+                          {' · '}
+                          {selectedCtx.daysSinceLastActivity === 0
+                            ? 'última hoy'
+                            : selectedCtx.daysSinceLastActivity === 1
+                              ? 'última ayer'
+                              : `última hace ${selectedCtx.daysSinceLastActivity} días`}
+                        </>
+                      )}
+                    </span>
+                  )}
+                </div>
+
+                <ActivityTimeline
+                  activities={selectedCtx?.activities || []}
+                  limit={showAllActivities ? undefined : 5}
+                  emptyLabel="Todavía no hay gestiones registradas en esta oportunidad."
+                />
+
+                {selectedCtx && selectedCtx.activities.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllActivities(v => !v)}
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold text-slate-500 hover:text-blue-600 transition-colors"
+                  >
+                    {showAllActivities ? (
+                      <><ChevronUp size={13} /> Ver menos</>
+                    ) : (
+                      <><ChevronDown size={13} /> Ver las {selectedCtx.activities.length} gestiones</>
+                    )}
+                  </button>
+                )}
+
+                {!(isActivityFormOpen && !requireFollowUp) && (
+                  <button
+                    type="button"
+                    onClick={() => openActivityForm(false)}
+                    className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                  >
+                    <History size={14} /> Registrar gestión
+                  </button>
+                )}
+
+                {isActivityFormOpen && !requireFollowUp && renderActivityForm()}
+              </div>
+
               <div className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800 flex gap-4">
-                <button 
+                <button
                   onClick={() => {
                     handleDeleteOpp(selectedOpp.id);
                   }}
