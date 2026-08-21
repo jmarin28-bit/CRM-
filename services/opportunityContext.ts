@@ -35,6 +35,10 @@ import type {
 // extensiones. Vite y tsc lo resuelven igual gracias a allowImportingTsExtensions.
 import { calendarDaysBetween, followUpState, isActivityDone } from "./activityStatus.ts";
 import type { FollowUpState } from "./activityStatus.ts";
+// opportunityHealth importa de acá solo TIPOS y los umbrales por defecto, así
+// que no hay ciclo en tiempo de ejecución: el puntaje no sabe qué es un contexto.
+import { computeHealth } from "./opportunityHealth.ts";
+import type { OpportunityHealth } from "./opportunityHealth.ts";
 
 // ============================================================
 // 1. Umbrales
@@ -157,6 +161,13 @@ export interface OpportunityContext {
   alerts: OpportunityAlert[];
   /** Atajo para el punto rojo de la tarjeta: hay al menos una alerta grave. */
   hasRisk: boolean;
+
+  /**
+   * Salud comercial 0-100. Se calcula acá, en la misma pasada, y no en la vista:
+   * si la tarjeta y el panel lo calcularan cada uno por su lado, el tablero
+   * podría marcar una oportunidad en riesgo y el panel decir que está sana.
+   */
+  health: OpportunityHealth;
 }
 
 export interface ContextData {
@@ -297,7 +308,9 @@ const daysSince = (iso: string | undefined, now: Date): number | undefined => {
 // solo enseña a ignorar el color rojo.
 
 export const buildAlerts = (
-  ctx: Omit<OpportunityContext, "alerts" | "hasRisk">,
+  // Las alertas se calculan ANTES que la salud y no la reciben: la salud no
+  // puede ser insumo de una alerta o el razonamiento se volvería circular.
+  ctx: Omit<OpportunityContext, "alerts" | "hasRisk" | "health">,
   th: ContextThresholds
 ): OpportunityAlert[] => {
   const alerts: OpportunityAlert[] = [];
@@ -431,7 +444,7 @@ export const buildOpportunityContext = (
   const valorCOP = toCOPValue(opp.valor, opp.moneda, data.trm);
   const probabilidad = Number.isFinite(opp.probabilidad) ? opp.probabilidad : 0;
 
-  const base: Omit<OpportunityContext, "alerts" | "hasRisk"> = {
+  const base: Omit<OpportunityContext, "alerts" | "hasRisk" | "health"> = {
     opportunity: opp,
     account,
     contact,
@@ -466,10 +479,27 @@ export const buildOpportunityContext = (
 
   const alerts = buildAlerts(base, th);
 
+  // Los mismos umbrales que usan las alertas: si el tablero dice "estancada" a
+  // los 14 días, la salud tiene que empezar a castigar en el mismo día.
+  const health = computeHealth(
+    {
+      etapa: opp.etapa,
+      isOpen: base.isOpen,
+      daysSinceLastActivity: base.daysSinceLastActivity,
+      nextActionState: base.nextAction?.state,
+      nextActionDaysOverdue: base.nextAction?.daysOverdue,
+      daysToClose: base.daysToClose,
+      hasQuote: !!quote,
+      quoteStatus: quote?.status,
+    },
+    th
+  );
+
   return {
     ...base,
     alerts,
     hasRisk: alerts.some((a) => a.severity === "risk"),
+    health,
   };
 };
 

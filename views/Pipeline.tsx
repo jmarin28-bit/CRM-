@@ -46,7 +46,8 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  History
+  History,
+  Gauge
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -98,6 +99,16 @@ import {
   type OpportunityContext
 } from '../services/opportunityContext';
 import { requestQuoteAction } from '../services/quoteNavigation';
+
+// La salud comercial la calcula buildOpportunityContext en la misma pasada, así
+// que acá solo se importa cómo pintarla. El umbral de la tarjeta y las clases de
+// color viven en el módulo para que la tarjeta y el panel no puedan discrepar.
+import {
+  CARD_SCORE_THRESHOLD,
+  HEALTH_BAND_CLASS,
+  HEALTH_BAR_CLASS,
+  healthSentence
+} from '../services/opportunityHealth';
 
 // La bitácora se dibuja con el mismo componente que usa el historial de
 // contactos, y las reglas del formulario (fechas, validaciones) viven en un
@@ -293,6 +304,21 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({
           <DollarSign size={14} className="mr-1 text-emerald-500 shrink-0" />
           {formatMoney(opportunity.valor, opportunity.moneda)}
           <span className="ml-1 text-[10px] font-bold text-slate-400">{opportunity.moneda}</span>
+
+          {/* Salud comercial, SOLO cuando está por debajo del umbral.
+              Una tarjeta sana no dice nada: si las treinta gritan un número,
+              ninguna se lee, y la marca dejaría de significar "mirá esta".
+              El umbral y el color salen del módulo de salud, no de acá, para
+              que la tarjeta y el panel no puedan pintar distinto el mismo dato.
+              El detalle de por qué el puntaje es ese está en el panel. */}
+          {ctx.health.isScored && ctx.health.score < CARD_SCORE_THRESHOLD && (
+            <span
+              className={`ml-auto shrink-0 px-2 py-0.5 rounded-full border text-[10px] font-black ${HEALTH_BAND_CLASS[ctx.health.band]}`}
+              title={`${healthSentence(ctx.health)} · ${ctx.health.bandLabel}`}
+            >
+              {ctx.health.score}/100
+            </span>
+          )}
         </div>
       </div>
 
@@ -1165,6 +1191,52 @@ const Pipeline: React.FC<{ activeUser: CRMUser }> = ({ activeUser }) => {
                   </div>
                 </div>
               </div>
+
+              {/* ── SALUD COMERCIAL ─────────────────────────────────────────
+                  Va arriba del todo a propósito: es el diagnóstico, y lo que
+                  sigue (próxima acción) es qué hacer con él.
+
+                  OJO CON EL TEXTO (Etapa 14): dice "Salud comercial: 82/100",
+                  nunca "Probabilidad de ganar: 82%". No es lo mismo. Una
+                  probabilidad promete un pronóstico que estos datos no pueden
+                  sostener; esto mide qué tan bien atendida está la negociación.
+                  La frase la arma healthSentence() para que no se reescriba
+                  suelta en ningún lado.
+
+                  Las oportunidades cerradas no se puntúan: mostrarle 45/100 a
+                  alguien que ya facturó es ruido. Por eso el isScored.
+
+                  El desglose de por qué el puntaje es ese llega en su etapa;
+                  acá todavía solo se muestra el número y la banda. */}
+              {selectedCtx?.health?.isScored && (
+                <div className="mt-6">
+                  <div
+                    className={`p-4 rounded-2xl border ${HEALTH_BAND_CLASS[selectedCtx.health.band]}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Gauge size={18} className="shrink-0" />
+                        <span className="text-sm font-bold truncate">
+                          {healthSentence(selectedCtx.health)}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-wider shrink-0">
+                        {selectedCtx.health.bandLabel}
+                      </span>
+                    </div>
+
+                    {/* La barra repite el dato del texto en forma visual. Es
+                        redundante a propósito: el número se compara mal de un
+                        vistazo entre tarjetas, la barra no. */}
+                    <div className="mt-3 h-2 w-full rounded-full bg-white/60 dark:bg-slate-900/40 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${HEALTH_BAR_CLASS[selectedCtx.health.band]}`}
+                        style={{ width: `${selectedCtx.health.score}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── INFORMACIÓN ECONÓMICA ───────────────────────────────────
                   El valor ponderado se muestra siempre en COP porque es lo que

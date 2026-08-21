@@ -322,47 +322,58 @@ export default function Dashboard({
           <h1 className="text-4xl font-black text-slate-900 dark:text-white leading-none">Resumen Comercial</h1>
           <p className="text-base text-slate-500 dark:text-slate-400 mt-2">Bienvenido de nuevo, {activeUser.name}.</p>
         </div>
+        {/* La proyección va en su propia fila, encima de los botones.
+            Antes estaba DENTRO de la fila de botones, y como ese bloque ocupa
+            dos líneas de alto, al no caber todo a lo ancho el flex-wrap
+            empujaba "Nuevo asesor" a un segundo renglón y lo dejaba colgando
+            debajo de la cifra. Separando el dato de los controles, los tres
+            botones quedan siempre alineados entre sí. */}
         {activeUser.role === "director" && (
-          <div className="flex flex-wrap items-center md:items-end gap-3">
-            <div className="text-right mr-2 hidden sm:block">
+          <div className="flex flex-col items-start md:items-end gap-4">
+            <div className="hidden sm:block md:text-right">
               <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Proyección de Ventas</div>
               <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(analytics?.forecast || 0)}</div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => exportBackup()}
-              title="Descargar copia de seguridad en JSON con todos los datos de Ioncore CRM"
-              className="inline-flex items-center gap-2 rounded-[18px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 px-4 py-3 text-[11px] font-black uppercase tracking-widest transition-all shadow-sm cursor-pointer"
-            >
-              <Download size={16} className="text-blue-600 dark:text-blue-400" /> Respaldar datos
-            </button>
+            {/* Se conserva flex-wrap como red de seguridad para pantallas muy
+                angostas: si llegara a hacer falta partir, que parta acá y no
+                arrastre la cifra. */}
+            <div className="flex flex-wrap items-center gap-3 md:justify-end">
+              <button
+                type="button"
+                onClick={() => exportBackup()}
+                title="Descargar copia de seguridad en JSON con todos los datos de Ioncore CRM"
+                className="inline-flex items-center gap-2 rounded-[18px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 px-5 py-3 text-[11px] font-black uppercase tracking-widest transition-all shadow-sm cursor-pointer"
+              >
+                <Download size={16} className="text-blue-600 dark:text-blue-400" /> Respaldar datos
+              </button>
 
-            <label
-              title="Subir archivo JSON para restaurar los datos de Ioncore CRM"
-              className="inline-flex items-center gap-2 rounded-[18px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 px-4 py-3 text-[11px] font-black uppercase tracking-widest transition-all shadow-sm cursor-pointer"
-            >
-              <Upload size={16} className="text-emerald-600 dark:text-emerald-400" /> Restaurar datos
-              <input
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    importBackup(file);
-                  }
-                  e.target.value = "";
-                }}
-              />
-            </label>
+              <label
+                title="Subir archivo JSON para restaurar los datos de Ioncore CRM"
+                className="inline-flex items-center gap-2 rounded-[18px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 px-5 py-3 text-[11px] font-black uppercase tracking-widest transition-all shadow-sm cursor-pointer"
+              >
+                <Upload size={16} className="text-emerald-600 dark:text-emerald-400" /> Restaurar datos
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      importBackup(file);
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
 
-            <button
-              onClick={() => setShowAdvisorModal(true)}
-              className="inline-flex items-center gap-2 rounded-[18px] bg-slate-900 px-5 py-3 text-[11px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-600"
-            >
-              <Plus size={16} /> Nuevo asesor
-            </button>
+              <button
+                onClick={() => setShowAdvisorModal(true)}
+                className="inline-flex items-center gap-2 rounded-[18px] bg-slate-900 px-5 py-3 text-[11px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-600"
+              >
+                <Plus size={16} /> Nuevo asesor
+              </button>
+            </div>
           </div>
         )}
       </div>
